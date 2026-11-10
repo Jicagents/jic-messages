@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "JIC Messages",
-    "slug": "jic-messages",
+    "slug": "jic-agents",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0c2340"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.jicagents.messages"
@@ -21,13 +23,28 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0c2340"
       },
-      "package": "com.jicagents.messages"
+      "package": "com.jicagents.messages",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
       "expo-local-authentication"
     ],
-    "scheme": "jicmessages"
+    "scheme": "jicmessages",
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "0404ba48-c4d4-4366-93a6-ae932f0ff9fb"
+      }
+    },
+    "owner": "jic-agents"
   }
 }
