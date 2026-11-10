@@ -4,6 +4,20 @@ import { router } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signIn, getAccess } from "../lib/auth";
+import * as Notifications from "expo-notifications";
+
+async function registerDevice() {
+  const { status } = await Notifications.requestPermissionsAsync();
+  if (status !== "granted") return;
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+  const access = await getAccess();
+  if (!access || !token) return;
+  await fetch("https://jicagents.com/api/mobile/device", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ token, platform: "android", tz: "America/Denver" }),
+  }).catch(() => {});
+}
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -29,6 +43,7 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email, password);
+      await registerDevice();
       router.replace("/inbox");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
