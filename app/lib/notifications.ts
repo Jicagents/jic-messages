@@ -1,6 +1,6 @@
 // app/lib/notifications.ts  (React Native / Expo, expo-notifications)
 import * as Notifications from "expo-notifications";
-import * as Device from "expo-device";
+// import * as Device from "expo-device";
 import Constants from "expo-constants";
 import { Linking, Platform } from "react-native";
 import { channelFor, VIBRATION, type AlertPrefs } from "./alertChannel";
@@ -58,7 +58,7 @@ export const requestPermissions = () =>
 
 /** Get the Expo push token and register this device with the server. Only registers if permission is granted. */
 export async function registerDevice(api: { registerDevice: (b: { token: string; platform: string; tz: string }) => Promise<void> }) {
-  if (!Device.isDevice) return null; // push does not work on simulators/emulators
+  // if (!Device.isDevice) return null;
   const perm = await Notifications.getPermissionsAsync();
   if (!perm.granted) return null;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? (Constants as any).easConfig?.projectId;

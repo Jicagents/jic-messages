@@ -3,13 +3,19 @@ import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, ScrollView, Pl
 import { router } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import * as Notifications from "expo-notifications";
 import { signOut, getAccess } from "../lib/auth";
-import { ensureAlertChannel, DEFAULT_PREFS, SOUND_IDS, VIBRATION, Prefs } from "./lib/alertChannel";
+import { SOUND_IDS, VIBRATION, channelFor, AlertPrefs } from "./lib/alertChannel";
+
+const DEFAULT_PREFS: AlertPrefs & { repeatMin: number } = {
+  override: true,
+  sound: { enabled: true, id: "chime" },
+  vibrate: { enabled: true, pattern: "long" },
+  repeatMin: 0,
+};
 
 export default function Settings() {
   const [biometric, setBiometric] = useState(false);
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const [hasBiometric, setHasBiometric] = useState(false);
 
   useEffect(() => {
@@ -25,10 +31,9 @@ export default function Settings() {
     check();
   }, []);
 
-  async function savePrefs(next: Prefs) {
+  async function savePrefs(next: typeof DEFAULT_PREFS) {
     setPrefs(next);
     await SecureStore.setItemAsync("jic_prefs", JSON.stringify(next));
-    await ensureAlertChannel(next);
     const token = await getAccess();
     if (token) {
       await fetch("https://jicagents.com/api/mobile/prefs", {
@@ -84,13 +89,13 @@ export default function Settings() {
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Sound</Text>
-          <Switch value={prefs.sound} onValueChange={(v) => savePrefs({ ...prefs, sound: v })} trackColor={{ true: "#14b8a6" }} />
+          <Switch value={prefs.sound.enabled} onValueChange={(v) => savePrefs({ ...prefs, sound: { ...prefs.sound, enabled: v } })} trackColor={{ true: "#14b8a6" }} />
         </View>
-        {prefs.sound && (
+        {prefs.sound.enabled && (
           <View style={styles.options}>
             {SOUND_IDS.map((s) => (
-              <TouchableOpacity key={s} style={[styles.opt, prefs.soundId === s && styles.optOn]} onPress={() => savePrefs({ ...prefs, soundId: s })}>
-                <Text style={styles.optText}>{s}</Text>
+              <TouchableOpacity key={s} style={[styles.opt, prefs.sound.id === s && styles.optOn]} onPress={() => savePrefs({ ...prefs, sound: { ...prefs.sound, id: s } })}>
+                <Text style={[styles.optText, prefs.sound.id === s && styles.optTextOn]}>{s}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -99,13 +104,13 @@ export default function Settings() {
           <>
             <View style={styles.row}>
               <Text style={styles.label}>Vibrate</Text>
-              <Switch value={prefs.vibrate} onValueChange={(v) => savePrefs({ ...prefs, vibrate: v })} trackColor={{ true: "#14b8a6" }} />
+              <Switch value={prefs.vibrate.enabled} onValueChange={(v) => savePrefs({ ...prefs, vibrate: { ...prefs.vibrate, enabled: v } })} trackColor={{ true: "#14b8a6" }} />
             </View>
-            {prefs.vibrate && (
+            {prefs.vibrate.enabled && (
               <View style={styles.options}>
-                {VIBRATION.filter(v => v !== "off").map((p) => (
-                  <TouchableOpacity key={p} style={[styles.opt, prefs.pattern === p && styles.optOn]} onPress={() => savePrefs({ ...prefs, pattern: p })}>
-                    <Text style={styles.optText}>{p}</Text>
+                {(["short", "long", "pulse"] as const).map((p) => (
+                  <TouchableOpacity key={p} style={[styles.opt, prefs.vibrate.pattern === p && styles.optOn]} onPress={() => savePrefs({ ...prefs, vibrate: { ...prefs.vibrate, pattern: p } })}>
+                    <Text style={[styles.optText, prefs.vibrate.pattern === p && styles.optTextOn]}>{p}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -117,8 +122,8 @@ export default function Settings() {
         </View>
         <View style={styles.options}>
           {[0, 1, 2, 5].map((m) => (
-            <TouchableOpacity key={m} style={[styles.opt, prefs.repeatMin === m && styles.optOn]} onPress={() => savePrefs({ ...prefs, repeatMin: m as 0|1|2|5 })}>
-              <Text style={styles.optText}>{m === 0 ? "Off" : `${m} min`}</Text>
+            <TouchableOpacity key={m} style={[styles.opt, prefs.repeatMin === m && styles.optOn]} onPress={() => savePrefs({ ...prefs, repeatMin: m })}>
+              <Text style={[styles.optText, prefs.repeatMin === m && styles.optTextOn]}>{m === 0 ? "Off" : `${m} min`}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -147,6 +152,7 @@ const styles = StyleSheet.create({
   opt: { backgroundColor: "#fff", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e5e7eb" },
   optOn: { backgroundColor: "#14b8a6", borderColor: "#14b8a6" },
   optText: { color: "#0c2340", fontSize: 14 },
+  optTextOn: { color: "#fff" },
   testBtn: { backgroundColor: "#14b8a6", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 16 },
   testText: { color: "#fff", fontWeight: "700" },
   logout: { backgroundColor: "#e11d48", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 12, marginBottom: 32 },
