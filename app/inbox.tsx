@@ -61,6 +61,9 @@ export default function Inbox() {
       <View style={styles.header}>
         <Image source={require("../assets/jic-logo.png")} style={styles.logo} resizeMode="contain" />
         <Text style={styles.headerTitle}>JIC Messages</Text>
+        <TouchableOpacity onPress={() => router.push("/settings")} style={styles.settingsBtn}>
+          <Text style={styles.settingsIcon}>⚙</Text>
+        </TouchableOpacity>
       </View>
       <View style={styles.subHeader}>
         <Text style={styles.heading}>Messages</Text>
@@ -120,7 +123,9 @@ export default function Inbox() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f4f8fb" },
-  header: { backgroundColor: "#0c2340", alignItems: "center", paddingTop: 40, paddingBottom: 12 },
+  header: { backgroundColor: "#0c2340", alignItems: "center", paddingTop: 40, paddingBottom: 12, position: "relative" },
+  settingsBtn: { position: "absolute", right: 16, top: 48 },
+  settingsIcon: { color: "#fff", fontSize: 20 },
   logo: { width: 140, height: 70 },
   headerTitle: { color: "#fff", fontSize: 16, marginTop: 4 },
   subHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 16 },

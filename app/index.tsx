@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
-import { signIn } from "../lib/auth";
+import * as LocalAuthentication from "expo-local-authentication";
+import * as SecureStore from "expo-secure-store";
+import { signIn, getAccess } from "../lib/auth";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -9,6 +11,18 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    async function checkBiometric() {
+      const enabled = await SecureStore.getItemAsync("jic_biometric");
+      const token = await getAccess();
+      if (enabled === "true" && token) {
+        const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Unlock JIC Messages" });
+        if (result.success) router.replace("/inbox");
+      }
+    }
+    checkBiometric();
+  }, []);
 
   async function handleSignIn() {
     setError("");
