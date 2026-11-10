@@ -7,16 +7,20 @@ import { signIn, getAccess } from "../lib/auth";
 import * as Notifications from "expo-notifications";
 
 async function registerDevice() {
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== "granted") return;
-  const token = (await Notifications.getExpoPushTokenAsync()).data;
-  const access = await getAccess();
-  if (!access || !token) return;
-  await fetch("https://jicagents.com/api/mobile/device", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ token, platform: "android", tz: "America/Denver" }),
-  }).catch(() => {});
+  try {
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== "granted") return;
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    const access = await getAccess();
+    if (!access || !token) return;
+    await fetch("https://jicagents.com/api/mobile/device", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ token, platform: "android", tz: "America/Denver" }),
+    });
+  } catch (e) {
+    console.log("Push registration skipped:", e);
+  }
 }
 
 export default function Login() {
