@@ -7,22 +7,30 @@ export default function MessageDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [message, setMessage] = useState<any>(null);
 
+  const [error, setError] = useState("");
   useEffect(() => {
     async function load() {
-      let token = await getAccess();
-      if (!token) token = await refreshToken();
-      if (!token) return router.replace("/");
-      const res = await fetch(`https://jicagents.com/api/mobile/message/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessage(data.message);
+      try {
+        let token = await getAccess();
+        if (!token) token = await refreshToken();
+        if (!token) return router.replace("/");
+        const res = await fetch(`https://jicagents.com/api/mobile/message/${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMessage(data.message);
+        } else {
+          setError(`Failed to load (${res.status})`);
+        }
+      } catch (e) {
+        setError("Network error");
       }
     }
     load();
   }, [id]);
 
+  if (error) return <View style={styles.container}><Text>{error}</Text><TouchableOpacity onPress={() => router.back()}><Text style={{color:"#14b8a6",marginTop:12}}>Go back</Text></TouchableOpacity></View>;
   if (!message) return <View style={styles.container}><Text>Loading...</Text></View>;
 
   const fields = Array.isArray(message.fields) ? message.fields : [];

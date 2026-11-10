@@ -5,9 +5,12 @@ import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signOut } from "../lib/auth";
 
+const SOUNDS = ["default", "chime", "bell", "ding", "alert"];
+
 export default function Settings() {
   const [biometric, setBiometric] = useState(false);
   const [notifications, setNotifications] = useState(true);
+  const [sound, setSound] = useState("default");
   const [hasBiometric, setHasBiometric] = useState(false);
 
   useEffect(() => {
@@ -19,6 +22,8 @@ export default function Settings() {
       setBiometric(enabled === "true");
       const notif = await SecureStore.getItemAsync("jic_notifications");
       setNotifications(notif !== "false");
+      const snd = await SecureStore.getItemAsync("jic_sound");
+      if (snd) setSound(snd);
     }
     check();
   }, []);
@@ -26,7 +31,10 @@ export default function Settings() {
   async function toggleBiometric(value: boolean) {
     if (value && hasBiometric) {
       const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Enable biometric unlock" });
-      if (!result.success) return;
+      if (!result.success) {
+        Alert.alert("Failed", "Could not verify biometrics");
+        return;
+      }
     }
     setBiometric(value);
     await SecureStore.setItemAsync("jic_biometric", value ? "true" : "false");
@@ -35,6 +43,11 @@ export default function Settings() {
   async function toggleNotifications(value: boolean) {
     setNotifications(value);
     await SecureStore.setItemAsync("jic_notifications", value ? "true" : "false");
+  }
+
+  async function changeSound(s: string) {
+    setSound(s);
+    await SecureStore.setItemAsync("jic_sound", s);
   }
 
   async function handleLogout() {
@@ -56,9 +69,20 @@ export default function Settings() {
           </View>
         )}
         <View style={styles.row}>
-          <Text style={styles.label}>Message notifications</Text>
+          <Text style={styles.label}>Notifications</Text>
           <Switch value={notifications} onValueChange={toggleNotifications} trackColor={{ true: "#14b8a6" }} />
         </View>
+        {notifications && (
+          <View style={styles.soundSection}>
+            <Text style={styles.soundLabel}>Notification sound</Text>
+            {SOUNDS.map((s) => (
+              <TouchableOpacity key={s} style={[styles.soundRow, sound === s && styles.soundOn]} onPress={() => changeSound(s)}>
+                <Text style={styles.soundText}>{s}</Text>
+                {sound === s && <Text style={styles.check}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         <TouchableOpacity style={styles.logout} onPress={handleLogout}>
           <Text style={styles.logoutText}>Sign out</Text>
         </TouchableOpacity>
@@ -75,6 +99,12 @@ const styles = StyleSheet.create({
   content: { padding: 16 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#fff", padding: 16, borderRadius: 12, marginBottom: 12 },
   label: { fontSize: 16, color: "#0c2340" },
+  soundSection: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 12 },
+  soundLabel: { fontSize: 14, color: "#5b6b7c", marginBottom: 8 },
+  soundRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  soundOn: { backgroundColor: "#f0fdfa" },
+  soundText: { fontSize: 15, color: "#0c2340" },
+  check: { color: "#14b8a6", fontWeight: "700" },
   logout: { backgroundColor: "#e11d48", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 24 },
   logoutText: { color: "#fff", fontWeight: "700" },
 });
