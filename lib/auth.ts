@@ -2,26 +2,39 @@ import * as SecureStore from "expo-secure-store";
 
 const API = "https://jicagents.com";
 
-export async function signIn(email: string, password: string): Promise<{ token: string; slug: string }> {
-  const res = await fetch(`${API}/api/portal/login`, {
+export async function signIn(email: string, password: string) {
+  const res = await fetch(`${API}/api/mobile/auth`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
   });
-  if (!res.ok) throw new Error("Sign-in failed");
-  const cookie = res.headers.get("set-cookie") || "";
-  const match = cookie.match(/jic_portal=([^;]+)/);
-  if (!match) throw new Error("No session");
-  const token = match[1];
-  await SecureStore.setItemAsync("jic_token", token);
-  const slug = token.split("|")[1] || "";
-  return { token, slug };
+  if (!res.ok) throw new Error("Invalid credentials");
+  const data = await res.json();
+  await SecureStore.setItemAsync("jic_access", data.access);
+  await SecureStore.setItemAsync("jic_refresh", data.refresh);
+  return data;
 }
 
-export async function getToken(): Promise<string | null> {
-  return SecureStore.getItemAsync("jic_token");
+export async function getAccess(): Promise<string | null> {
+  return SecureStore.getItemAsync("jic_access");
 }
 
-export async function signOut(): Promise<void> {
-  await SecureStore.deleteItemAsync("jic_token");
+export async function refreshToken() {
+  const refresh = await SecureStore.getItemAsync("jic_refresh");
+  if (!refresh) return null;
+  const res = await fetch(`${API}/api/mobile/auth`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  await SecureStore.setItemAsync("jic_access", data.access);
+  await SecureStore.setItemAsync("jic_refresh", data.refresh);
+  return data.access;
+}
+
+export async function signOut() {
+  await SecureStore.deleteItemAsync("jic_access");
+  await SecureStore.deleteItemAsync("jic_refresh");
 }
