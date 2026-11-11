@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Pressable, Linking, ScrollView, Image, TextInput, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, Linking, ScrollView, TextInput, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, LayoutAnimation, UIManager } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { authorizedFetch, formatApiError, isMessageUuid, messageDetailUrl, routeParam, SignedOutError } from "../../lib/messageApi";
-import { fieldsToShow } from "../../lib/messageFields";
+import { messageContent } from "../../lib/messageFields";
+import { Avatar, Card, ReadPill, ScreenHeader, SectionLabel, Toast } from "../../components/ui";
+import { BOTTOM_GAP, colors, radius, space, type } from "../../lib/theme";
 import { formatUsPhone } from "../../lib/phone";
 import {
   ALL_METHODS,
@@ -20,6 +22,16 @@ import {
 } from "../../lib/redirect";
 
 const SEND_HEIGHT = 54;
+/**
+ * The call button dials *67 before the number (existing behavior). Whether that actually hides the
+ * caller id depends on the carrier and has not been confirmed for this team, so the caption does not
+ * promise it. Flip to true only after a verified test call shows "No Caller ID".
+ */
+const HIDDEN_NUMBER_VERIFIED = false;
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export default function MessageDetail() {
   const insets = useSafeAreaInsets();
@@ -55,11 +67,14 @@ export default function MessageDetail() {
   const [method, setMethod] = useState<Method | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const message = loaded?.id === messageId ? loaded.message : null;
   const activeId = useRef(messageId);
   activeId.current = messageId;
   const markedRead = useRef<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedNoteRef = useRef("");
 
   const say = useCallback((text: string) => {
     setToast(text);
@@ -125,6 +140,7 @@ export default function MessageDetail() {
       try {
         const res = await authorizedFetch("https://jicagents.com/api/mobile/team");
         if (cancel) return;
+        if (leaveIfSignedOut(res.status)) return;
         if (res.status === 404) {
           setTeamHidden(true);
           return;
@@ -135,11 +151,10 @@ export default function MessageDetail() {
           return;
         }
         setTeam(parseTeam(await res.json()));
-      } catch {
-        if (!cancel) {
-          setTeamHidden(true);
-          say("Could not load your team");
-        }
+      } catch (error) {
+        if (cancel || leaveIfSignedOut(error)) return;
+        setTeamHidden(true);
+        say("Could not load your team");
       }
     })();
     return () => {
@@ -148,24 +163,37 @@ export default function MessageDetail() {
   }, [messageId]);
 
   useEffect(() => {
+    setNote("");
+    setSavedNote("");
+    savedNoteRef.current = "";
+    setJustSaved(false);
+    setMoreOpen(false);
+  }, [messageId]);
+
+  useEffect(() => {
     if (!message || !messageId) return;
     const initialNote = String(message.note ?? message.dispatch_note ?? "");
-    setNote(initialNote);
+    // Keep an unsaved draft, including a cleared box, across pull-to-refresh.
+    const previousSaved = savedNoteRef.current;
+    setNote((current) => (current.trim() !== previousSaved.trim() ? current : initialNote));
     setSavedNote(initialNote);
+    savedNoteRef.current = initialNote;
     const alreadyRead = messageIsRead(message, preview.status);
     setRead(alreadyRead);
     if (alreadyRead || markedRead.current === messageId) return;
     markedRead.current = messageId;
     setRead(true);
-    postRead(messageId, true).catch(() => {
+    postRead(messageId, true).catch((error) => {
+      if (markedRead.current === messageId) markedRead.current = null;
       setRead(false);
+      if (leaveIfSignedOut(error)) return;
       say("Could not update");
     });
   }, [messageId, message]);
 
   const person = useMemo(() => team.find((member) => member.id === toId) ?? null, [team, toId]);
   const effective: Method | null = person ? (method ?? person.pref) : null;
-  const noteClean = note === savedNote;
+  const noteClean = note.trim() === savedNote.trim();
 
   async function toggleRead() {
     if (!messageId) return;
@@ -173,14 +201,16 @@ export default function MessageDetail() {
     setRead(next);
     try {
       await postRead(messageId, next);
-    } catch {
+    } catch (error) {
       setRead(!next);
+      if (leaveIfSignedOut(error)) return;
       say("Could not update");
     }
   }
 
   async function saveNote() {
     if (!messageId || noteClean || saving) return;
+    setJustSaved(false);
     setSaving(true);
     try {
       const res = await authorizedFetch("https://jicagents.com/api/mobile/note", {
@@ -188,13 +218,25 @@ export default function MessageDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message_id: messageId, note }),
       });
+      if (leaveIfSignedOut(res.status)) return;
       if (!res.ok) {
         say("Could not save the note");
         return;
       }
-      setSavedNote(note);
+      let stored = note.trim();
+      try {
+        const data = (await res.json()) as { note?: unknown };
+        if (typeof data?.note === "string") stored = data.note;
+      } catch {
+        // Older server answers { ok: true } only.
+      }
+      setNote(stored);
+      setSavedNote(stored);
+      savedNoteRef.current = stored;
+      setJustSaved(true);
       say("Note saved");
-    } catch {
+    } catch (error) {
+      if (leaveIfSignedOut(error)) return;
       say("Could not save the note");
     } finally {
       setSaving(false);
@@ -221,6 +263,7 @@ export default function MessageDetail() {
         body: JSON.stringify(body),
       });
       const text = await res.text();
+      if (leaveIfSignedOut(res.status)) return;
       if (!res.ok) throw new Error(redirectErrorMessage(res.status, text));
       let sent: Method = effective;
       let fellBack = false;
@@ -234,6 +277,7 @@ export default function MessageDetail() {
       const who = firstName(person.name);
       say(fellBack ? `Sent to ${who} by ${METHOD_SHORT[sent]} (${METHOD_SHORT[effective]} was not available)` : `Sent to ${person.name} by ${METHOD_SHORT[sent]}`);
     } catch (e) {
+      if (leaveIfSignedOut(e)) return;
       say(e instanceof Error ? e.message : "Could not send. Try another way.");
     } finally {
       setBusy(false);
@@ -248,233 +292,264 @@ export default function MessageDetail() {
 
   if (!messageId || (phase === "loading" && !message)) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <ActivityIndicator color="#14b8a6" style={{ marginTop: 48 }} />
-        <Text style={styles.loadingText}>{preview.caller_name ? `Loading ${preview.caller_name}...` : "Loading..."}</Text>
+      <View style={styles.container}>
+        <ScreenHeader back />
+        <ActivityIndicator color={colors.teal} style={{ marginTop: 48 }} />
+        <Text style={styles.loadingText}>{preview.caller_name ? `Loading ${preview.caller_name}…` : "Loading…"}</Text>
       </View>
     );
   }
 
   if (phase === "error" && !message) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={[styles.errorPage, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + SEND_HEIGHT }]}>
-        <Text style={styles.errorBody}>{errorText}</Text>
-        {messageId ? (
-          <Text style={styles.requested}>
-            Requested id: {messageId}
-            {isMessageUuid(messageId) ? "" : " (not a message UUID)"}
-          </Text>
-        ) : null}
-        <TouchableOpacity onPress={refresh}><Text style={styles.link}>Try again</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => router.back()}><Text style={styles.link}>Go back</Text></TouchableOpacity>
-      </ScrollView>
+      <View style={styles.container}>
+        <ScreenHeader back />
+        <ScrollView contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + BOTTOM_GAP }]}>
+          <Card>
+            <Text style={styles.body}>{errorText}</Text>
+            {messageId ? (
+              <Text style={styles.muted}>
+                Requested id: {messageId}
+                {isMessageUuid(messageId) ? "" : " (not a message UUID)"}
+              </Text>
+            ) : null}
+            <Pressable onPress={refresh} style={styles.linkBtn}><Text style={styles.link}>Try again</Text></Pressable>
+            <Pressable onPress={() => router.back()} style={styles.linkBtn}><Text style={styles.link}>Go back</Text></Pressable>
+          </Card>
+        </ScrollView>
+      </View>
     );
   }
-  if (!message) return <View style={styles.container}><Text style={styles.loadingText}>Loading...</Text></View>;
+  if (!message) return <View style={styles.container}><ScreenHeader back /><Text style={styles.loadingText}>Loading…</Text></View>;
 
-  const callerName = stringOr(message.caller_name, preview.caller_name) || "Unknown caller";
-  const callerPhone = stringOr(message.caller_phone, preview.caller_phone);
-  const reason = stringOr(message.message_text, message.reason, preview.message_text);
+  const content = messageContent(message, preview);
+  const callerName = content.callerName || "Unknown caller";
+  const callerPhone = content.callerPhone;
+  const reason = content.reason;
+  const extras = content.additional;
   const createdAt = stringOr(message.created_at, preview.created_at);
-  const fields = fieldsToShow(Array.isArray(message.fields) ? message.fields : [], reason, [callerName, callerPhone]);
-  const callerLabel = callerName === "Unknown caller" ? "caller" : callerName;
+  const callerLabel = callerName === "Unknown caller" ? "caller" : firstName(callerName) || callerName;
   const when = formatWhen(createdAt);
-  const sendLabel = !person ? "Send to…" : method ? `Send to ${firstName(person.name)} by ${METHOD_SHORT[method]}` : `Send to ${firstName(person.name)}`;
+  const sendLabel = !person ? "Choose a teammate" : method ? `Send to ${firstName(person.name)} by ${METHOD_SHORT[method]}` : `Send to ${firstName(person.name)}`;
+  const saveLabel = saving ? "Saving…" : noteClean ? (justSaved || savedNote ? "Saved" : "Save") : "Save";
+
+  function toggleMore() {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setMoreOpen((value) => !value);
+  }
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + SEND_HEIGHT }]}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#14b8a6" />}
-      >
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
-            <Text style={styles.back}>←</Text>
-          </TouchableOpacity>
-          <View style={styles.logoPill}>
-            <Image source={require("../../assets/jic-logo-mark.png")} style={styles.logo} resizeMode="contain" accessibilityLabel="JIC Agents" />
-          </View>
-        </View>
-
-        <View style={styles.nameRow}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>{(callerName || "?")[0]}</Text></View>
-          <View style={styles.nameMain}>
-            <Text style={styles.name}>{callerName}</Text>
-            {callerPhone ? (
-              <Text onPress={() => callCaller(callerPhone)} style={styles.phone}>{formatUsPhone(callerPhone)}</Text>
-            ) : null}
-            {when ? <Text style={styles.date}>{when}</Text> : null}
-          </View>
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: read }}
-            accessibilityLabel="Read status. Tap to change."
-            onPress={toggleRead}
-            style={[styles.pill, read ? styles.pillRead : styles.pillUnread]}
-          >
-            <Text style={[styles.pillText, read ? styles.pillTextRead : styles.pillTextUnread]}>{read ? "✓ Read" : "Unread"}</Text>
-          </Pressable>
-        </View>
-
-        {fields.length ? (
-          <View style={styles.card}>
-            <Text style={styles.kicker}>Message details</Text>
-            {fields.map((field, index) => (
-              <View key={`${field.label}-${index}`} style={index ? styles.fieldGap : undefined}>
-                <Text style={styles.kicker}>{field.label}</Text>
-                <Text style={styles.body}>{field.value}</Text>
+      <ScreenHeader back />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={[styles.page, { paddingBottom: insets.bottom + BOTTOM_GAP }]}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.teal} colors={[colors.teal]} progressBackgroundColor={colors.surface} />}
+        >
+          <Card style={styles.callerCard}>
+            <View style={styles.nameRow}>
+              <Avatar name={callerName} size={54} />
+              <View style={styles.nameMain}>
+                <Text style={styles.name} numberOfLines={2}>{callerName}</Text>
+                {callerPhone ? (
+                  <Text onPress={() => callCaller(callerPhone)} style={styles.phone} accessibilityRole="link">{formatUsPhone(callerPhone)}</Text>
+                ) : null}
+                {when ? <Text style={styles.date}>{when}</Text> : null}
               </View>
-            ))}
-          </View>
-        ) : null}
+              <ReadPill read={read} onPress={toggleRead} />
+            </View>
+            {content.formName ? <Text style={styles.formName}>{content.formName}</Text> : null}
+          </Card>
 
-        {reason ? (
-          <View style={styles.card}>
-            <Text style={styles.kicker}>Reason for calling</Text>
-            <Text style={styles.body}>{reason}</Text>
-          </View>
-        ) : null}
+          {reason ? (
+            <Card>
+              <SectionLabel>Reason for calling</SectionLabel>
+              <Text style={styles.reason} selectable>{reason}</Text>
+            </Card>
+          ) : null}
 
-        <Pressable style={styles.callBtn} onPress={() => callCaller(callerPhone)} disabled={!callerPhone}>
-          <Text style={styles.callText}>Call {callerLabel}</Text>
-        </Pressable>
-        <Text style={styles.callCaption}>Your number is hidden (*67)</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.kicker}>Dispatch note</Text>
-          <View style={styles.noteRow}>
-            <TextInput
-              style={styles.noteInput}
-              value={note}
-              onChangeText={(value) => setNote(value)}
-              placeholder="Add a note for your team"
-              placeholderTextColor="#6b7a90"
-              multiline
-            />
-            <Pressable
-              style={[styles.saveBtn, noteClean ? styles.saveClean : styles.saveDirty]}
-              onPress={saveNote}
-              disabled={noteClean || saving}
-            >
-              <Text style={[styles.saveText, noteClean ? styles.saveTextClean : styles.saveTextDirty]}>{noteClean ? "Saved" : saving ? "Saving" : "Save"}</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.redirectTitle} accessibilityRole="header">Redirect message</Text>
-          {teamHidden ? (
-            <Text style={styles.hint}>Redirect to a teammate is not available right now.</Text>
-          ) : (
-            <>
-              <Text style={styles.kicker}>Send to</Text>
+          {extras.length ? (
+            <Card style={styles.noPad}>
               <Pressable
-                style={[styles.combo, open && styles.comboOpen]}
-                onPress={() => { setOpen((value) => !value); setMethodOpen(false); }}
+                onPress={toggleMore}
+                style={styles.accordionHead}
                 accessibilityRole="button"
+                accessibilityState={{ expanded: moreOpen }}
+                accessibilityLabel={`Additional information, ${extras.length} ${extras.length === 1 ? "item" : "items"}`}
               >
-                {person ? (
-                  <View style={styles.comboMain}>
-                    <Avatar name={person.name} />
-                    <View style={styles.comboText}>
-                      <Text style={styles.comboName}>{person.name}</Text>
-                      {person.role ? <Text style={styles.role}>{person.role}</Text> : null}
-                    </View>
-                  </View>
-                ) : (
-                  <Text style={styles.placeholder}>Choose a teammate</Text>
-                )}
-                <Text style={styles.caret}>{open ? "▴" : "▾"}</Text>
+                <Text style={styles.accordionTitle}>Additional information ({extras.length})</Text>
+                <Text style={[styles.chevron, moreOpen && styles.chevronOpen]}>⌄</Text>
               </Pressable>
-              {open ? (
-                <View style={styles.list}>
-                  {team.length === 0 ? <Text style={styles.empty}>No other teammates yet</Text> : null}
-                  {team.map((member) => (
-                    <Pressable
-                      key={member.id}
-                      style={styles.member}
-                      onPress={() => { setToId(member.id); setMethod(null); setOpen(false); setMethodOpen(false); }}
-                    >
-                      <Avatar name={member.name} />
-                      <View style={styles.comboText}>
-                        <Text style={styles.memberName}>{member.name}</Text>
-                        {member.role ? <Text style={styles.role}>{member.role}</Text> : null}
-                      </View>
-                      <Text style={styles.prefers}>Prefers {METHOD_SHORT[member.pref]}</Text>
-                    </Pressable>
+              {moreOpen ? (
+                <View style={styles.accordionBody}>
+                  {extras.map((field, index) => (
+                    <View key={`${field.label}-${index}`} style={[styles.fieldRow, index > 0 && styles.fieldDivider]}>
+                      <Text style={styles.fieldLabel}>{field.label}</Text>
+                      <Text style={styles.fieldValue} selectable>{field.value}</Text>
+                    </View>
                   ))}
                 </View>
               ) : null}
+            </Card>
+          ) : null}
 
-              {person ? (
-                <>
-                  <Text style={[styles.kicker, styles.howLabel]}>How to reach {firstName(person.name)}</Text>
-                  <Pressable
-                    style={[styles.combo, methodOpen && styles.comboOpen, { minHeight: 52 }]}
-                    onPress={() => { setMethodOpen((value) => !value); setOpen(false); }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.methodIcon}>{method ? METHOD_ICON[method] : "⭐"}</Text>
-                    <View style={styles.comboText}>
-                      <Text style={styles.comboName}>{method ? METHOD_LABEL[method] : "Their preference"}</Text>
-                      {method == null ? <Text style={styles.role}>{METHOD_LABEL[person.pref]}</Text> : null}
-                    </View>
-                    <Text style={styles.caret}>{methodOpen ? "▴" : "▾"}</Text>
-                  </Pressable>
-                  {methodOpen ? (
-                    <View style={styles.list}>
-                      <Pressable style={styles.member} onPress={() => { setMethod(null); setMethodOpen(false); }}>
-                        <Text style={styles.methodIcon}>⭐</Text>
-                        <View style={styles.comboText}>
-                          <Text style={styles.memberName}>Their preference</Text>
-                          <Text style={styles.role}>{METHOD_LABEL[person.pref]}</Text>
-                        </View>
-                      </Pressable>
-                      {ALL_METHODS.map((item) => {
-                        const enabled = person.available.includes(item);
-                        return (
-                          <Pressable
-                            key={item}
-                            style={[styles.member, !enabled && styles.memberOff]}
-                            disabled={!enabled}
-                            onPress={() => { setMethod(item); setMethodOpen(false); }}
-                          >
-                            <Text style={styles.methodIcon}>{METHOD_ICON[item]}</Text>
-                            <Text style={[styles.memberName, styles.comboText]}>{METHOD_LABEL[item]}</Text>
-                            {!enabled ? <Text style={styles.prefers}>Not set up</Text> : null}
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  ) : null}
-                  {effective ? <Text style={styles.hint}>{METHOD_HINT[effective]}</Text> : null}
-                </>
-              ) : null}
+          <View>
+            <Pressable
+              style={({ pressed }) => [styles.callBtn, !callerPhone && styles.callOff, pressed && { opacity: 0.85 }]}
+              onPress={() => callCaller(callerPhone)}
+              disabled={!callerPhone}
+              accessibilityRole="button"
+              accessibilityLabel={`Call ${callerLabel}`}
+            >
+              <Text style={[styles.callIcon, !callerPhone && styles.callTextOff]}>✆</Text>
+              <Text style={[styles.callText, !callerPhone && styles.callTextOff]}>Call {callerLabel}</Text>
+            </Pressable>
+            <Text style={styles.callCaption}>{HIDDEN_NUMBER_VERIFIED ? "Your number is hidden (*67)" : "Dials *67 first. Number hiding depends on your carrier."}</Text>
+          </View>
 
+          <Card>
+            <SectionLabel>Dispatch note</SectionLabel>
+            <View style={styles.noteRow}>
+              <TextInput
+                style={styles.noteInput}
+                value={note}
+                onChangeText={(value) => { setNote(value); setJustSaved(false); }}
+                placeholder="Add a note for your team"
+                placeholderTextColor={colors.textFaint}
+                multiline
+                maxLength={2000}
+              />
               <Pressable
-                style={[styles.sendBtn, !person && styles.sendIdle]}
-                disabled={!person || busy}
-                onPress={send}
+                style={[styles.saveBtn, noteClean ? styles.saveClean : styles.saveDirty]}
+                onPress={saveNote}
+                disabled={noteClean || saving}
+                accessibilityRole="button"
+                accessibilityLabel={saveLabel}
               >
-                {busy ? <ActivityIndicator color="#ffffff" /> : <Text style={[styles.sendText, !person && styles.sendTextIdle]}>{sendLabel}</Text>}
+                <Text style={[styles.saveText, noteClean ? styles.saveTextClean : styles.saveTextDirty]}>{saveLabel}</Text>
               </Pressable>
-            </>
-          )}
-          <Text style={styles.toast} accessibilityLiveRegion="polite">{toast}</Text>
-        </View>
-      </ScrollView>
+            </View>
+          </Card>
+
+          <Card>
+            <Text style={styles.redirectTitle} accessibilityRole="header">Redirect message</Text>
+            {teamHidden ? (
+              <Text style={styles.hint}>Redirect to a teammate is not available right now.</Text>
+            ) : (
+              <>
+                <SectionLabel>Send to</SectionLabel>
+                <Pressable
+                  style={[styles.combo, open && styles.comboOpen]}
+                  onPress={() => { setOpen((value) => !value); setMethodOpen(false); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: open }}
+                >
+                  {person ? (
+                    <View style={styles.comboMain}>
+                      <Avatar name={person.name} size={36} />
+                      <View style={styles.comboText}>
+                        <Text style={styles.comboName}>{person.name}</Text>
+                        {person.role ? <Text style={styles.role}>{person.role}</Text> : null}
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.placeholder}>Choose a teammate</Text>
+                  )}
+                  <Text style={[styles.caret, open && styles.chevronOpen]}>⌄</Text>
+                </Pressable>
+                {open ? (
+                  <View style={styles.list}>
+                    {team.length === 0 ? <Text style={styles.empty}>No other teammates yet</Text> : null}
+                    {team.map((member, index) => (
+                      <Pressable
+                        key={member.id}
+                        style={[styles.member, index > 0 && styles.fieldDivider, member.id === toId && styles.memberOn]}
+                        onPress={() => { setToId(member.id); setMethod(null); setOpen(false); setMethodOpen(false); }}
+                      >
+                        <Avatar name={member.name} size={36} />
+                        <View style={styles.comboText}>
+                          <Text style={styles.memberName}>{member.name}</Text>
+                          {member.role ? <Text style={styles.role}>{member.role}</Text> : null}
+                        </View>
+                        <Text style={styles.prefers}>Prefers {METHOD_SHORT[member.pref]}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+
+                {person ? (
+                  <>
+                    <SectionLabel style={styles.howLabel}>How to reach {firstName(person.name)}</SectionLabel>
+                    <Pressable
+                      style={[styles.combo, methodOpen && styles.comboOpen]}
+                      onPress={() => { setMethodOpen((value) => !value); setOpen(false); }}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: methodOpen }}
+                    >
+                      <Text style={styles.methodIcon}>{method ? METHOD_ICON[method] : "⭐"}</Text>
+                      <View style={styles.comboText}>
+                        <Text style={styles.comboName}>{method ? METHOD_LABEL[method] : "Their preference"}</Text>
+                        {method == null ? <Text style={styles.role}>{METHOD_LABEL[person.pref]}</Text> : null}
+                      </View>
+                      <Text style={[styles.caret, methodOpen && styles.chevronOpen]}>⌄</Text>
+                    </Pressable>
+                    {methodOpen ? (
+                      <View style={styles.list}>
+                        <Pressable style={[styles.member, method == null && styles.memberOn]} onPress={() => { setMethod(null); setMethodOpen(false); }}>
+                          <Text style={styles.methodIcon}>⭐</Text>
+                          <View style={styles.comboText}>
+                            <Text style={styles.memberName}>Their preference</Text>
+                            <Text style={styles.role}>{METHOD_LABEL[person.pref]}</Text>
+                          </View>
+                        </Pressable>
+                        {ALL_METHODS.map((item) => {
+                          const enabled = person.available.includes(item);
+                          return (
+                            <Pressable
+                              key={item}
+                              style={[styles.member, styles.fieldDivider, !enabled && styles.memberOff, method === item && styles.memberOn]}
+                              disabled={!enabled}
+                              onPress={() => { setMethod(item); setMethodOpen(false); }}
+                              accessibilityState={{ disabled: !enabled, selected: method === item }}
+                            >
+                              <Text style={styles.methodIcon}>{METHOD_ICON[item]}</Text>
+                              <Text style={[styles.memberName, styles.comboText]}>{METHOD_LABEL[item]}</Text>
+                              {!enabled ? <Text style={styles.prefers}>Not set up</Text> : null}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                    {effective ? <Text style={styles.hint}>{METHOD_HINT[effective]}</Text> : null}
+                  </>
+                ) : null}
+
+                <Pressable
+                  style={({ pressed }) => [styles.sendBtn, !person && styles.sendIdle, pressed && person && { opacity: 0.85 }]}
+                  disabled={!person || busy}
+                  onPress={send}
+                  accessibilityRole="button"
+                >
+                  {busy ? <ActivityIndicator color={colors.tealInk} /> : <Text style={[styles.sendText, !person && styles.sendTextIdle]}>{sendLabel}</Text>}
+                </Pressable>
+              </>
+            )}
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
+      <Toast text={toast} bottom={insets.bottom + 24} />
     </View>
   );
 }
 
-function Avatar({ name }: { name: string }) {
-  return (
-    <View style={styles.smallAvatar}>
-      <Text style={styles.smallAvatarText}>{(name || "?")[0]}</Text>
-    </View>
-  );
+function leaveIfSignedOut(errorOrStatus: unknown): boolean {
+  if (errorOrStatus instanceof SignedOutError || errorOrStatus === 401) {
+    router.replace("/");
+    return true;
+  }
+  return false;
 }
 
 async function postRead(id: string, next: boolean) {
@@ -483,6 +558,7 @@ async function postRead(id: string, next: boolean) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, read: next }),
   });
+  if (res.status === 401) throw new SignedOutError();
   if (!res.ok) throw new Error("Could not update");
 }
 
@@ -505,68 +581,66 @@ function formatWhen(value: string): string {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f4f8fb" },
-  page: { padding: 16, gap: 14 },
-  errorPage: { padding: 24 },
-  loadingText: { textAlign: "center", color: "#6b7a90", marginTop: 12 },
-  errorBody: { color: "#0c2340", fontSize: 16, lineHeight: 22 },
-  requested: { color: "#6b7a90", fontSize: 13, marginTop: 8 },
-  link: { color: "#14b8a6", marginTop: 16, fontSize: 16 },
-  header: { backgroundColor: "#0c2340", flexDirection: "row", alignItems: "center", marginHorizontal: -16, marginTop: -16, paddingBottom: 12, paddingHorizontal: 16, marginBottom: 2 },
-  back: { color: "#fff", fontSize: 24, marginRight: 8, minWidth: 32 },
-  logoPill: { backgroundColor: "#ffffff", borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
-  logo: { width: 120, height: 64 },
-  nameRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: "#dff3f0", alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 20, fontWeight: "700", color: "#0d9488" },
+  container: { flex: 1, backgroundColor: colors.bg },
+  page: { padding: space.lg, gap: space.lg },
+  loadingText: { textAlign: "center", color: colors.textMuted, marginTop: space.md },
+  body: { ...type.body },
+  muted: { ...type.muted, marginTop: space.sm },
+  linkBtn: { marginTop: space.lg, minHeight: 40, justifyContent: "center" },
+  link: { color: colors.aqua, fontSize: 16, fontWeight: "700" },
+  callerCard: { paddingVertical: space.lg },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: space.md },
   nameMain: { flex: 1 },
-  name: { fontSize: 21, fontWeight: "700", color: "#0c2340" },
-  phone: { fontSize: 15, color: "#0d9488", textDecorationLine: "underline", marginTop: 2 },
-  date: { fontSize: 13, color: "#6b7a90", marginTop: 2 },
-  pill: { minHeight: 44, paddingHorizontal: 14, borderRadius: 999, justifyContent: "center", borderWidth: 1 },
-  pillRead: { borderColor: "#bfe6e1", backgroundColor: "#e6f6f3" },
-  pillUnread: { borderColor: "#f2b8b8", backgroundColor: "#fde8e8" },
-  pillText: { fontWeight: "700", fontSize: 13.5 },
-  pillTextRead: { color: "#0d9488" },
-  pillTextUnread: { color: "#b42318" },
-  card: { backgroundColor: "#ffffff", borderRadius: 14, padding: 16, borderWidth: 1, borderColor: "#d7dfea" },
-  kicker: { fontSize: 12.5, color: "#6b7a90", marginBottom: 4 },
-  body: { fontSize: 17, lineHeight: 24, color: "#0c2340" },
-  fieldGap: { marginTop: 12 },
-  callBtn: { minHeight: 56, borderRadius: 14, backgroundColor: "#14b8a6", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  callText: { fontSize: 17, fontWeight: "700", color: "#04201c" },
-  callCaption: { textAlign: "center", fontSize: 12.5, color: "#6b7a90", marginTop: -8 },
-  noteRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
-  noteInput: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: "#d7dfea", borderRadius: 10, padding: 10, color: "#0c2340", fontSize: 15, textAlignVertical: "top" },
-  saveBtn: { minHeight: 48, paddingHorizontal: 18, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  saveClean: { backgroundColor: "#e6f6f3" },
-  saveDirty: { backgroundColor: "#0c2340" },
-  saveText: { fontWeight: "700", fontSize: 15 },
-  saveTextClean: { color: "#0d9488" },
-  saveTextDirty: { color: "#ffffff" },
-  redirectTitle: { fontSize: 16, fontWeight: "700", color: "#0c2340", marginBottom: 10 },
-  combo: { minHeight: 56, borderWidth: 1, borderColor: "#d7dfea", borderRadius: 12, backgroundColor: "#f9fbfd", paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 10 },
-  comboOpen: { borderColor: "#14b8a6" },
-  comboMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  name: { fontSize: 22, fontWeight: "800", color: colors.text },
+  phone: { fontSize: 16, color: colors.aqua, marginTop: 3, fontWeight: "600" },
+  date: { fontSize: 13, color: colors.textFaint, marginTop: 3 },
+  formName: { marginTop: space.md, fontSize: 12.5, color: colors.textFaint },
+  reason: { fontSize: 18, lineHeight: 26, color: colors.text },
+  noPad: { padding: 0 },
+  accordionHead: { minHeight: 56, flexDirection: "row", alignItems: "center", paddingHorizontal: space.lg },
+  accordionTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: colors.text },
+  chevron: { color: colors.aqua, fontSize: 22, lineHeight: 22, marginTop: -8 },
+  chevronOpen: { transform: [{ rotate: "180deg" }], marginTop: 8 },
+  accordionBody: { borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: space.lg, paddingBottom: space.sm },
+  fieldRow: { paddingVertical: space.md },
+  fieldDivider: { borderTopWidth: 1, borderTopColor: colors.border },
+  fieldLabel: { fontSize: 12.5, color: colors.textMuted, marginBottom: 3, fontWeight: "600" },
+  fieldValue: { fontSize: 16, lineHeight: 22, color: colors.text },
+  callBtn: { minHeight: 58, borderRadius: radius.md, backgroundColor: colors.teal, alignItems: "center", justifyContent: "center", paddingHorizontal: space.lg, flexDirection: "row", gap: space.sm },
+  callOff: { backgroundColor: colors.surfaceHigh },
+  callIcon: { fontSize: 20, color: colors.tealInk, fontWeight: "800" },
+  callText: { fontSize: 17.5, fontWeight: "800", color: colors.tealInk },
+  callTextOff: { color: colors.textFaint },
+  callCaption: { textAlign: "center", fontSize: 12.5, color: colors.textFaint, marginTop: space.sm },
+  noteRow: { flexDirection: "row", alignItems: "flex-end", gap: space.sm },
+  noteInput: { flex: 1, minHeight: 50, maxHeight: 160, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceHigh, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 12, color: colors.text, fontSize: 15.5, textAlignVertical: "top" },
+  saveBtn: { minHeight: 50, minWidth: 84, paddingHorizontal: space.lg, borderRadius: radius.sm, alignItems: "center", justifyContent: "center" },
+  saveClean: { backgroundColor: colors.successBg, borderWidth: 1, borderColor: colors.successBorder },
+  saveDirty: { backgroundColor: colors.teal },
+  saveText: { fontWeight: "800", fontSize: 15 },
+  saveTextClean: { color: colors.aqua },
+  saveTextDirty: { color: colors.tealInk },
+  redirectTitle: { ...type.h2, marginBottom: space.md },
+  combo: { minHeight: 56, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surfaceHigh, paddingHorizontal: space.md, flexDirection: "row", alignItems: "center", gap: space.md },
+  comboOpen: { borderColor: colors.teal },
+  comboMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: space.md },
   comboText: { flex: 1 },
-  comboName: { fontSize: 16, fontWeight: "600", color: "#0c2340" },
-  placeholder: { flex: 1, fontSize: 16, color: "#6b7a90" },
-  caret: { color: "#0c2340", fontSize: 16 },
-  list: { marginTop: 8, borderWidth: 1, borderColor: "#d7dfea", borderRadius: 12, overflow: "hidden", backgroundColor: "#ffffff" },
-  empty: { padding: 14, color: "#6b7a90", fontSize: 14 },
-  member: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  memberOff: { opacity: 0.5 },
-  memberName: { fontSize: 15.5, fontWeight: "600", color: "#0c2340" },
-  role: { fontSize: 12.5, color: "#6b7a90", marginTop: 1 },
-  prefers: { fontSize: 12.5, color: "#6b7a90" },
-  methodIcon: { fontSize: 16, width: 28, textAlign: "center" },
-  howLabel: { marginTop: 14 },
-  hint: { fontSize: 12.5, lineHeight: 18, color: "#6b7a90", marginTop: 8 },
-  sendBtn: { marginTop: 14, minHeight: SEND_HEIGHT, borderRadius: 14, backgroundColor: "#0c2340", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  sendIdle: { backgroundColor: "#e3e9f1" },
-  sendText: { fontSize: 16.5, fontWeight: "700", color: "#ffffff", textAlign: "center" },
-  sendTextIdle: { color: "#6b7a90" },
-  smallAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#dff3f0", alignItems: "center", justifyContent: "center" },
-  smallAvatarText: { fontSize: 14, fontWeight: "700", color: "#0d9488" },
-  toast: { minHeight: 20, textAlign: "center", fontSize: 13, fontWeight: "500", color: "#0d9488", marginTop: 8 },
+  comboName: { fontSize: 16, fontWeight: "700", color: colors.text },
+  placeholder: { flex: 1, fontSize: 16, color: colors.textFaint },
+  caret: { color: colors.aqua, fontSize: 22, lineHeight: 22, marginTop: -8 },
+  list: { marginTop: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.bgDeep },
+  empty: { padding: 14, color: colors.textMuted, fontSize: 14 },
+  member: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: space.md, paddingHorizontal: space.md, paddingVertical: space.sm },
+  memberOn: { backgroundColor: "rgba(0,199,199,0.10)" },
+  memberOff: { opacity: 0.45 },
+  memberName: { fontSize: 15.5, fontWeight: "700", color: colors.text },
+  role: { fontSize: 12.5, color: colors.textMuted, marginTop: 1 },
+  prefers: { fontSize: 12.5, color: colors.textFaint },
+  methodIcon: { fontSize: 17, width: 28, textAlign: "center" },
+  howLabel: { marginTop: space.lg },
+  hint: { fontSize: 12.5, lineHeight: 18, color: colors.textMuted, marginTop: space.sm },
+  sendBtn: { marginTop: space.lg, minHeight: SEND_HEIGHT, borderRadius: radius.md, backgroundColor: colors.teal, alignItems: "center", justifyContent: "center", paddingHorizontal: space.lg },
+  sendIdle: { backgroundColor: colors.surfaceHigh },
+  sendText: { fontSize: 16.5, fontWeight: "800", color: colors.tealInk, textAlign: "center" },
+  sendTextIdle: { color: colors.textFaint },
 });

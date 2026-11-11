@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { Stack, router } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
 import { prepareNotifications } from "./lib/notifications";
 import { messageIdFromData } from "../lib/messageApi";
+import { colors } from "../lib/theme";
 
 export default function Layout() {
   useEffect(() => {
@@ -26,5 +28,10 @@ export default function Layout() {
     return () => subscription.remove();
   }, []);
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <>
+      <StatusBar style="light" />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }} />
+    </>
+  );
 }
