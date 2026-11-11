@@ -1,36 +1,69 @@
-import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Linking, ScrollView, Image, TextInput, Alert } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Linking, ScrollView, Image, TextInput, Alert, RefreshControl } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
-import { getAccess, refreshToken } from "../../lib/auth";
+import { getAccess } from "../../lib/auth";
+import { authorizedFetch, formatApiError, isMessageUuid, messageDetailUrl, routeParam, SignedOutError } from "../../lib/messageApi";
 
 export default function MessageDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const [message, setMessage] = useState<any>(null);
-  const [error, setError] = useState("");
+  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const messageId = routeParam(params.id);
+  const [loaded, setLoaded] = useState<{ id: string; message: any } | null>(null);
+  const [errorState, setErrorState] = useState<{ id: string; text: string } | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const requestSeq = useRef(0);
+  const loadedRef = useRef<{ id: string; message: any } | null>(null);
+  const message = loaded?.id === messageId ? loaded.message : null;
+  const error = !messageId
+    ? "Failed to load: missing message id"
+    : errorState?.id === messageId
+      ? errorState.text
+      : "";
+
+  const load = useCallback(async () => {
+    if (!messageId) return;
+    const seq = ++requestSeq.current;
+    const hadMessage = loadedRef.current?.id === messageId;
+    try {
+      const res = await authorizedFetch(messageDetailUrl(messageId));
+      if (seq !== requestSeq.current) return;
+      if (res.status === 401) return router.replace("/");
+      if (!res.ok) {
+        const text = formatApiError(res.status, await res.text());
+        if (hadMessage) Alert.alert("Couldn't refresh", text);
+        else setErrorState({ id: messageId, text });
+        return;
+      }
+      const data = await res.json();
+      if (seq !== requestSeq.current) return;
+      if (!data?.message) {
+        const text = "Failed to load: the server returned no message.";
+        if (hadMessage) Alert.alert("Couldn't refresh", text);
+        else setErrorState({ id: messageId, text });
+        return;
+      }
+      const next = { id: messageId, message: data.message };
+      loadedRef.current = next;
+      setLoaded(next);
+      setErrorState(null);
+    } catch (e) {
+      if (seq !== requestSeq.current) return;
+      if (e instanceof SignedOutError) return router.replace("/");
+      if (hadMessage) Alert.alert("Couldn't refresh", "Network error");
+      else setErrorState({ id: messageId, text: "Network error" });
+    }
+  }, [messageId]);
 
   useEffect(() => {
-    async function load() {
-      try {
-        let token = await getAccess();
-        if (!token) token = await refreshToken();
-        if (!token) return router.replace("/");
-        const res = await fetch(`https://jicagents.com/api/mobile/message?id=${id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setMessage(data.message);
-        } else {
-          setError(`Failed to load (${res.status})`);
-        }
-      } catch (e) {
-        setError("Network error");
-      }
-    }
     load();
-  }, [id]);
+  }, [load]);
+
+  async function refresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
 
   function dialBlocked() {
     const phone = String(message?.caller_phone || "").replace(/\D/g, "");
@@ -45,7 +78,7 @@ export default function MessageDetail() {
     await fetch("https://jicagents.com/api/mobile/note", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: id, note: note.trim() }),
+      body: JSON.stringify({ message_id: messageId, note: note.trim() }),
     }).catch(() => {});
     setNote("");
     setSaving(false);
@@ -57,19 +90,40 @@ export default function MessageDetail() {
     const res = await fetch("https://jicagents.com/api/mobile/redirect", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: id, channel }),
+      body: JSON.stringify({ message_id: messageId, channel }),
     }).catch(() => null);
     if (res?.ok) Alert.alert("Redirected", `Sent via ${channel}`);
     else Alert.alert("Failed", "Could not redirect");
   }
 
-  if (error) return <View style={styles.container}><Text>{error}</Text><TouchableOpacity onPress={() => router.back()}><Text style={{color:"#14b8a6",marginTop:12}}>Go back</Text></TouchableOpacity></View>;
+  if (error && !message) {
+    return (
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.errorPage}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#14b8a6" />}
+      >
+        <Text style={styles.errorBody}>{error}</Text>
+        {messageId ? (
+          <Text style={styles.requested}>
+            Requested id: {messageId}
+            {isMessageUuid(messageId) ? "" : " (not a message UUID)"}
+          </Text>
+        ) : null}
+        <TouchableOpacity onPress={refresh}><Text style={styles.link}>Try again</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()}><Text style={styles.link}>Go back</Text></TouchableOpacity>
+      </ScrollView>
+    );
+  }
   if (!message) return <View style={styles.container}><Text>Loading...</Text></View>;
 
   const fields = Array.isArray(message.fields) ? message.fields : [];
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#14b8a6" />}
+    >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}><Text style={styles.back}>←</Text></TouchableOpacity>
         <Image source={require("../../assets/jic-logo.png")} style={styles.logo} resizeMode="contain" />
@@ -137,6 +191,10 @@ export default function MessageDetail() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f4f8fb" },
+  errorPage: { padding: 24 },
+  errorBody: { color: "#0c2340", fontSize: 16, lineHeight: 22 },
+  requested: { color: "#5c6b7a", fontSize: 13, marginTop: 8 },
+  link: { color: "#14b8a6", marginTop: 16, fontSize: 16 },
   header: { backgroundColor: "#0c2340", flexDirection: "row", alignItems: "center", paddingTop: 40, paddingBottom: 12, paddingHorizontal: 16 },
   back: { color: "#fff", fontSize: 24, marginRight: 12 },
   logo: { width: 120, height: 60 },
