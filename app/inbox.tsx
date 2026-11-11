@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput, Modal, Image } from "react-native";
 import { router } from "expo-router";
-import { getAccess, refreshToken, signOut } from "../lib/auth";
+import { authorizedFetch, messagesListUrl, SignedOutError } from "../lib/messageApi";
+import { formatUsPhone } from "../lib/phone";
 
 type Message = {
   id: string;
@@ -21,19 +22,15 @@ export default function Inbox() {
   const [refreshing, setRefreshing] = useState(false);
 
   async function load() {
-    let token = await getAccess();
-    if (!token) token = await refreshToken();
-    if (!token) return router.replace("/");
-    const res = await fetch(`https://jicagents.com/api/mobile/messages?filter=${filter}&q=${encodeURIComponent(search)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 401) {
-      token = await refreshToken();
-      if (!token) return router.replace("/");
-    }
-    if (res.ok) {
-      const data = await res.json();
-      setMessages(data.messages || []);
+    try {
+      const res = await authorizedFetch(messagesListUrl(filter, search));
+      if (res.status === 401) return router.replace("/");
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages || []);
+      }
+    } catch (e) {
+      if (e instanceof SignedOutError) router.replace("/");
     }
   }
 
@@ -85,14 +82,14 @@ export default function Inbox() {
         refreshing={refreshing}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
         renderItem={({ item }) => (
-          <TouchableOpacity style={[styles.card, item.status === "new" && styles.cardUnread]} onPress={() => router.push(`/message/${item.id}`)}>
+          <TouchableOpacity style={[styles.card, item.status === "new" && styles.cardUnread]} onPress={() => router.push({ pathname: "/message/[id]", params: { id: item.id, caller_name: item.caller_name ?? "", caller_phone: item.caller_phone ?? "", message_text: item.message_text ?? "", status: item.status ?? "", created_at: item.created_at ?? "" } })}>
             <View style={styles.avatar}><Text style={styles.avatarText}>{item.caller_name?.[0] || "?"}</Text></View>
             <View style={styles.cardContent}>
               <View style={styles.cardRow}>
                 <Text style={[styles.name, item.status === "new" && styles.nameUnread]}>{item.caller_name || "Unknown"}</Text>
                 <Text style={styles.time}>{formatTime(item.created_at)}</Text>
               </View>
-              <Text style={styles.phone}>{item.caller_phone}</Text>
+              <Text style={styles.phone}>{formatUsPhone(item.caller_phone)}</Text>
               <Text style={styles.preview} numberOfLines={2}>{item.message_text}</Text>
             </View>
             <Text style={styles.chevron}>›</Text>
