@@ -51,7 +51,7 @@ export function ScreenHeader({ title, back, right }: { title?: string; back?: bo
     <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
       <View style={styles.headerRow}>
         {back ? (
-          <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back" hitSlop={10} style={styles.backBtn}>
+          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/inbox"))} accessibilityRole="button" accessibilityLabel="Back" hitSlop={10} style={styles.backBtn}>
             <Text style={styles.backText}>‹</Text>
           </Pressable>
         ) : null}

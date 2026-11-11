@@ -2,6 +2,10 @@
 // channelId. Until it does, it still sends alert-...-v1 from jic-site/src/server/alertChannel.ts;
 // legacyServerChannelIds() is that full set, and the app creates each one.
 export const ALERT_CHANNEL_ID = "jic-alerts-v3";
+/** Unread reminders: high importance, follows the phone's ringer (never the alarm stream). */
+export const REMINDER_CHANNEL_ID = "jic-reminders";
+/** Test and app info notifications: default importance. */
+export const GENERAL_CHANNEL_ID = "jic-general";
 export const SOUND_IDS = ["chime", "ping", "bell", "siren", "alarm"] as const;
 export type SoundId = (typeof SOUND_IDS)[number];
 export type VibratePattern = "short" | "long" | "pulse";
@@ -16,12 +20,15 @@ export type AlertPrefs = {
   override: boolean;
   sound: { enabled: boolean; id: SoundId };
   vibrate: { enabled: boolean; pattern: VibratePattern };
+  /** Play new-message alerts on the alarm stream so they ring when the phone is on vibrate. Default on. */
+  ringOnVibrate?: boolean;
 };
 
 export const DEFAULT_ALERT_PREFS: AlertPrefs = {
   override: true,
   sound: { enabled: true, id: "chime" },
   vibrate: { enabled: true, pattern: "long" },
+  ringOnVibrate: true,
 };
 
 const LEGACY_SOUNDS = [...SOUND_IDS, "mute"] as const;

@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { ALERT_CHANNEL_ID, DEFAULT_ALERT_PREFS, legacyServerChannelIds, retiredPrefixedChannelIds, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
+import { ALERT_CHANNEL_ID, DEFAULT_ALERT_PREFS, GENERAL_CHANNEL_ID, REMINDER_CHANNEL_ID, legacyServerChannelIds, retiredPrefixedChannelIds, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
 
 /** Call once at app start. */
 export async function configureNotifications() {
@@ -45,38 +45,60 @@ export async function loadAlertPrefs(): Promise<AlertPrefs> {
         enabled: parsed.vibrate?.enabled !== false,
         pattern: isVibratePattern(parsed.vibrate?.pattern) ? parsed.vibrate.pattern : DEFAULT_ALERT_PREFS.vibrate.pattern,
       },
+      ringOnVibrate: parsed.ringOnVibrate !== false,
     };
   } catch {
     return DEFAULT_ALERT_PREFS;
   }
 }
 
-function alarmChannelInput(soundFile: string, pattern: number[]) {
+type ChannelOpts = { soundFile: string | null; pattern: number[] | null; alarmStream: boolean };
+
+function alarmChannelInput({ soundFile, pattern, alarmStream }: ChannelOpts) {
   return {
     name: "Message alerts",
     description: "New messages from callers",
     importance: Notifications.AndroidImportance.MAX,
     sound: soundFile,
-    enableVibrate: true,
-    vibrationPattern: pattern,
+    enableVibrate: !!pattern,
+    vibrationPattern: pattern ?? undefined,
+    // Only takes effect if the user grants "Do Not Disturb access" to the app in Android settings.
     bypassDnd: true,
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    // Lock screen shows "JIC Messages" only; push bodies are generic anyway.
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
     enableLights: true,
-    lightColor: "#14B8A6",
+    lightColor: "#00C7C7",
     audioAttributes: {
-      usage: Notifications.AndroidAudioUsage.ALARM,
+      // ALARM plays at alarm volume, so it rings when the ringer is on vibrate. NOTIFICATION follows the ringer.
+      usage: alarmStream ? Notifications.AndroidAudioUsage.ALARM : Notifications.AndroidAudioUsage.NOTIFICATION,
       contentType: Notifications.AndroidAudioContentType.SONIFICATION,
       flags: {
-        enforceAudibility: true,
+        enforceAudibility: alarmStream,
         requestHardwareAudioVideoSynchronization: false,
       },
     },
   };
 }
 
-async function recreateAlarmChannel(id: string, soundFile: string, pattern: number[]) {
+async function recreateAlarmChannel(id: string, opts: ChannelOpts) {
   await Notifications.deleteNotificationChannelAsync(id);
-  await Notifications.setNotificationChannelAsync(id, alarmChannelInput(soundFile, pattern));
+  await Notifications.setNotificationChannelAsync(id, alarmChannelInput(opts));
+}
+
+async function ensureSideChannels() {
+  await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
+    name: "Unread reminders",
+    description: "Reminders about messages nobody has opened yet",
+    importance: Notifications.AndroidImportance.HIGH,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    enableVibrate: true,
+  });
+  await Notifications.setNotificationChannelAsync(GENERAL_CHANNEL_ID, {
+    name: "General",
+    description: "Tests and app information",
+    importance: Notifications.AndroidImportance.DEFAULT,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+  });
 }
 
 function soundFileFor(sound: string) {
@@ -98,11 +120,17 @@ export async function ensureAlertChannel(p: AlertPrefs) {
   }
   const soundId = isSoundId(p.sound.id) ? p.sound.id : DEFAULT_ALERT_PREFS.sound.id;
   const pattern = isVibratePattern(p.vibrate.pattern) ? p.vibrate.pattern : DEFAULT_ALERT_PREFS.vibrate.pattern;
-  await recreateAlarmChannel(ALERT_CHANNEL_ID, `${soundId}.wav`, VIBRATION[pattern]);
+  const alarmStream = p.ringOnVibrate !== false;
+  await recreateAlarmChannel(ALERT_CHANNEL_ID, {
+    soundFile: p.sound.enabled === false ? null : `${soundId}.wav`,
+    pattern: p.vibrate.enabled === false ? null : VIBRATION[pattern],
+    alarmStream,
+  });
   for (const id of legacyServerChannelIds()) {
     const parts = id.split("-");
-    await recreateAlarmChannel(id, soundFileFor(parts[1] ?? "chime"), patternFor(parts[2] ?? "long"));
+    await recreateAlarmChannel(id, { soundFile: soundFileFor(parts[1] ?? "chime"), pattern: patternFor(parts[2] ?? "long"), alarmStream });
   }
+  await ensureSideChannels();
 }
 
 /** Local alert on jic-alerts-v3. The portal test push does not send channelId, so it cannot select this channel. */
@@ -116,8 +144,8 @@ export async function scheduleAlarmTest() {
   const sound = `${(await loadAlertPrefs()).sound.id}.wav`;
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "JIC test alert",
-      body: "Alarm channel. Turn the ringer to vibrate and leave alarm volume up.",
+      title: "JIC Messages test",
+      body: "This is how a new message alert sounds.",
       sound,
       data: { test: true },
     },

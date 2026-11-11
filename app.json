@@ -5,11 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0c2340"
+      "backgroundColor": "#061D32"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -21,7 +21,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundColor": "#0c2340"
+        "backgroundColor": "#061D32"
       },
       "package": "com.jicagents.messages",
       "googleServicesFile": "./google-services.json",
@@ -60,6 +60,7 @@
         "projectId": "0404ba48-c4d4-4366-93a6-ae932f0ff9fb"
       }
     },
-    "owner": "jic-agents"
+    "owner": "jic-agents",
+    "backgroundColor": "#061D32"
   }
 }
