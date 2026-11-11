@@ -28,13 +28,17 @@ export async function ensureAlertChannel(p: AlertPrefs) {
   await Notifications.setNotificationChannelAsync(channelFor(p), {
     name: `Message alerts${p.override ? " (override)" : ""}`,
     description: "New messages from callers",
-    importance: p.override ? Notifications.AndroidImportance.MAX : Notifications.AndroidImportance.HIGH,
+    importance: Notifications.AndroidImportance.MAX,
     sound: p.sound.enabled ? `${p.sound.id}.wav` : null,
     enableVibrate: p.vibrate.enabled,
     vibrationPattern: p.vibrate.enabled ? VIBRATION[p.vibrate.pattern] : undefined,
-    bypassDnd: p.override, // only takes effect once the user allows it (see openDndSettings)
+    bypassDnd: true,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     enableLights: true, lightColor: "#14B8A6",
+    audioAttributes: {
+      usage: Notifications.AndroidAudioUsage.ALARM,
+      contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+    },
   });
 }
 
