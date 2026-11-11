@@ -16,7 +16,7 @@ export default function MessageDetail() {
         let token = await getAccess();
         if (!token) token = await refreshToken();
         if (!token) return router.replace("/");
-        const res = await fetch(`https://jicagents.com/api/mobile/message/${id}`, {
+        const res = await fetch(`https://jicagents.com/api/mobile/message?id=${id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
