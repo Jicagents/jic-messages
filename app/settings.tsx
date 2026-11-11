@@ -5,7 +5,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signOut, getAccess } from "../lib/auth";
 import { DEFAULT_ALERT_PREFS, SOUND_IDS, type AlertPrefs } from "./lib/alertChannel";
-import { ensureAlertChannel } from "./lib/notifications";
+import { ensureAlertChannel, scheduleAlarmTest } from "./lib/notifications";
 
 const DEFAULT_PREFS: AlertPrefs & { repeatMin: number } = {
   ...DEFAULT_ALERT_PREFS,
@@ -54,13 +54,12 @@ export default function Settings() {
   }
 
   async function sendTest() {
-    const token = await getAccess();
-    if (!token) return Alert.alert("Not signed in");
-    await fetch("https://jicagents.com/api/mobile/test", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {});
-    Alert.alert("Test sent", "Check your notifications");
+    try {
+      await scheduleAlarmTest();
+      Alert.alert("Test alert", "A local alert was sent on the alarm channel.");
+    } catch (e) {
+      Alert.alert("Couldn't send test", e instanceof Error ? e.message : "Notifications are off");
+    }
   }
 
   async function handleLogout() {

@@ -105,6 +105,26 @@ export async function ensureAlertChannel(p: AlertPrefs) {
   }
 }
 
+/** Local alert on jic-alerts-v3. The portal test push does not send channelId, so it cannot select this channel. */
+export async function scheduleAlarmTest() {
+  await ensureAlertChannel(await loadAlertPrefs());
+  const existing = await Notifications.getPermissionsAsync();
+  if (!existing.granted) {
+    const asked = await Notifications.requestPermissionsAsync();
+    if (!asked.granted) throw new Error("Notifications are off");
+  }
+  const sound = `${(await loadAlertPrefs()).sound.id}.wav`;
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "JIC test alert",
+      body: "Alarm channel. Turn the ringer to vibrate and leave alarm volume up.",
+      sound,
+      data: { test: true },
+    },
+    trigger: { channelId: ALERT_CHANNEL_ID },
+  });
+}
+
 /** Call once at startup, and before requesting an Expo push token. */
 export async function prepareNotifications() {
   await configureNotifications();
