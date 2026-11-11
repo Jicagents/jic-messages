@@ -1,69 +1,82 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Linking, ScrollView, Image, TextInput, Alert, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Linking, ScrollView, Image, TextInput, Alert, RefreshControl, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
-import { getAccess } from "../../lib/auth";
 import { authorizedFetch, formatApiError, isMessageUuid, messageDetailUrl, routeParam, SignedOutError } from "../../lib/messageApi";
 
 export default function MessageDetail() {
-  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    caller_name?: string | string[];
+    caller_phone?: string | string[];
+    message_text?: string | string[];
+    status?: string | string[];
+    created_at?: string | string[];
+  }>();
   const messageId = routeParam(params.id);
+  const preview = {
+    caller_name: routeParam(params.caller_name),
+    caller_phone: routeParam(params.caller_phone),
+    message_text: routeParam(params.message_text),
+    status: routeParam(params.status),
+    created_at: routeParam(params.created_at),
+  };
   const [loaded, setLoaded] = useState<{ id: string; message: any } | null>(null);
-  const [errorState, setErrorState] = useState<{ id: string; text: string } | null>(null);
+  const [errorText, setErrorText] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const requestSeq = useRef(0);
-  const loadedRef = useRef<{ id: string; message: any } | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const message = loaded?.id === messageId ? loaded.message : null;
-  const error = !messageId
-    ? "Failed to load: missing message id"
-    : errorState?.id === messageId
-      ? errorState.text
-      : "";
+  const activeId = useRef(messageId);
+  activeId.current = messageId;
 
   const load = useCallback(async () => {
     if (!messageId) return;
-    const seq = ++requestSeq.current;
-    const hadMessage = loadedRef.current?.id === messageId;
+    const requested = messageId;
+    setPhase((current) => (loaded?.id === requested ? current : "loading"));
+    setErrorText("");
     try {
-      const res = await authorizedFetch(messageDetailUrl(messageId));
-      if (seq !== requestSeq.current) return;
+      const res = await authorizedFetch(messageDetailUrl(requested));
+      if (activeId.current !== requested) return;
       if (res.status === 401) return router.replace("/");
       if (!res.ok) {
         const text = formatApiError(res.status, await res.text());
-        if (hadMessage) Alert.alert("Couldn't refresh", text);
-        else setErrorState({ id: messageId, text });
+        if (loaded?.id === requested) Alert.alert("Couldn't refresh", text);
+        else {
+          setErrorText(text);
+          setPhase("error");
+        }
         return;
       }
       const data = await res.json();
-      if (seq !== requestSeq.current) return;
+      if (activeId.current !== requested) return;
       if (!data?.message) {
         const text = "Failed to load: the server returned no message.";
-        if (hadMessage) Alert.alert("Couldn't refresh", text);
-        else setErrorState({ id: messageId, text });
+        if (loaded?.id === requested) Alert.alert("Couldn't refresh", text);
+        else {
+          setErrorText(text);
+          setPhase("error");
+        }
         return;
       }
-      const next = { id: messageId, message: data.message };
-      loadedRef.current = next;
-      setLoaded(next);
-      setErrorState(null);
+      setLoaded({ id: requested, message: data.message });
+      setPhase("ready");
+      setErrorText("");
     } catch (e) {
-      if (seq !== requestSeq.current) return;
+      if (activeId.current !== requested) return;
       if (e instanceof SignedOutError) return router.replace("/");
-      if (hadMessage) Alert.alert("Couldn't refresh", "Network error");
-      else setErrorState({ id: messageId, text: "Network error" });
+      if (loaded?.id === requested) Alert.alert("Couldn't refresh", "Network error");
+      else {
+        setErrorText("Network error");
+        setPhase("error");
+      }
     }
-  }, [messageId]);
+  }, [loaded, messageId]);
 
   useEffect(() => {
+    if (!messageId) return;
     load();
-  }, [load]);
-
-  async function refresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
+  }, [messageId]);
 
   function dialBlocked() {
     const phone = String(message?.caller_phone || "").replace(/\D/g, "");
@@ -71,39 +84,65 @@ export default function MessageDetail() {
     Linking.openURL(`tel:*67${phone}`);
   }
 
+  async function refresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
+
   async function saveNote() {
-    if (!note.trim()) return;
+    if (!note.trim() || !messageId) return;
     setSaving(true);
-    const token = await getAccess();
-    await fetch("https://jicagents.com/api/mobile/note", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: messageId, note: note.trim() }),
-    }).catch(() => {});
-    setNote("");
+    try {
+      const res = await authorizedFetch("https://jicagents.com/api/mobile/note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId, note: note.trim() }),
+      });
+      if (res.ok) {
+        setNote("");
+        Alert.alert("Note saved");
+      } else {
+        Alert.alert("Couldn't save note", formatApiError(res.status, await res.text()));
+      }
+    } catch {
+      Alert.alert("Couldn't save note", "Network error");
+    }
     setSaving(false);
-    Alert.alert("Note saved");
   }
 
   async function redirect(channel: string) {
-    const token = await getAccess();
-    const res = await fetch("https://jicagents.com/api/mobile/redirect", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: messageId, channel }),
-    }).catch(() => null);
-    if (res?.ok) Alert.alert("Redirected", `Sent via ${channel}`);
-    else Alert.alert("Failed", "Could not redirect");
+    if (!messageId) return;
+    try {
+      const res = await authorizedFetch("https://jicagents.com/api/mobile/redirect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId, channel }),
+      });
+      if (res.ok) Alert.alert("Redirected", `Sent via ${channel}`);
+      else Alert.alert("Failed", formatApiError(res.status, await res.text()));
+    } catch {
+      Alert.alert("Failed", "Could not redirect");
+    }
   }
 
-  if (error && !message) {
+  if (!messageId || (phase === "loading" && !message)) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator color="#14b8a6" style={{ marginTop: 48 }} />
+        <Text style={styles.loadingText}>{preview.caller_name ? `Loading ${preview.caller_name}...` : "Loading..."}</Text>
+      </View>
+    );
+  }
+
+  if (phase === "error" && !message) {
     return (
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.errorPage}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#14b8a6" />}
       >
-        <Text style={styles.errorBody}>{error}</Text>
+        <Text style={styles.errorBody}>{errorText}</Text>
         {messageId ? (
           <Text style={styles.requested}>
             Requested id: {messageId}
@@ -192,6 +231,7 @@ export default function MessageDetail() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f4f8fb" },
   errorPage: { padding: 24 },
+  loadingText: { textAlign: "center", color: "#5c6b7a", marginTop: 12 },
   errorBody: { color: "#0c2340", fontSize: 16, lineHeight: 22 },
   requested: { color: "#5c6b7a", fontSize: 13, marginTop: 8 },
   link: { color: "#14b8a6", marginTop: 16, fontSize: 16 },

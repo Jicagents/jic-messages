@@ -81,7 +81,7 @@ export default function Inbox() {
         refreshing={refreshing}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
         renderItem={({ item }) => (
-          <TouchableOpacity style={[styles.card, item.status === "new" && styles.cardUnread]} onPress={() => router.push(`/message/${encodeURIComponent(item.id)}`)}>
+          <TouchableOpacity style={[styles.card, item.status === "new" && styles.cardUnread]} onPress={() => router.push({ pathname: "/message/[id]", params: { id: item.id, caller_name: item.caller_name ?? "", caller_phone: item.caller_phone ?? "", message_text: item.message_text ?? "", status: item.status ?? "", created_at: item.created_at ?? "" } })}>
             <View style={styles.avatar}><Text style={styles.avatarText}>{item.caller_name?.[0] || "?"}</Text></View>
             <View style={styles.cardContent}>
               <View style={styles.cardRow}>

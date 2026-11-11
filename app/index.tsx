@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, ActivityInd
 import { router } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import { signIn, getAccess } from "../lib/auth";
+import { signIn, getAccess, getValidAccess } from "../lib/auth";
 import * as Notifications from "expo-notifications";
 import { prepareNotifications } from "./lib/notifications";
 
@@ -35,7 +35,8 @@ export default function Login() {
   useEffect(() => {
     async function checkBiometric() {
       const enabled = await SecureStore.getItemAsync("jic_biometric");
-      const token = await getAccess();
+      // Access tokens expire in 15 minutes. Refresh before the inbox or a message fetch runs.
+      const token = await getValidAccess();
       if (enabled === "true" && token) {
         const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Unlock JIC Messages" });
         if (result.success) router.replace("/inbox");
