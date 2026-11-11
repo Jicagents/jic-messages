@@ -58,3 +58,21 @@ export function retiredPrefixedChannelIds(): string[] {
 }
 
 export const channelFor = (_p?: AlertPrefs) => ALERT_CHANNEL_ID;
+
+/**
+ * Sound file and vibration for every alarm channel on this phone (jic-alerts-v3 and the
+ * legacy alert-...-v1 ids the portal may still send). The master toggles win over the
+ * sound and vibe encoded in a legacy channel id, so a push on an old id follows the
+ * settings saved on the phone.
+ */
+export function channelMedia(prefs: AlertPrefs): { soundFile: string | null; pattern: number[] | null } {
+  const soundOn = prefs.sound.enabled !== false;
+  const vibrateOn = prefs.vibrate.enabled !== false;
+  const soundId = (SOUND_IDS as readonly string[]).includes(prefs.sound.id) ? prefs.sound.id : DEFAULT_ALERT_PREFS.sound.id;
+  const patternName = prefs.vibrate.pattern;
+  const pattern = patternName === "short" || patternName === "long" || patternName === "pulse" ? VIBRATION[patternName] : VIBRATION.long;
+  return {
+    soundFile: soundOn ? `${soundId}.wav` : null,
+    pattern: vibrateOn ? pattern : null,
+  };
+}

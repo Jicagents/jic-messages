@@ -64,6 +64,51 @@ test("long forms keep order and labels", () => {
   assert.deepEqual(additionalFields(input).map((f) => f.label), ["Patient name", "Date of birth", "Birth weight", "Pharmacy phone"]);
 });
 
+test("old API keeps label lines that exist only in message_text", () => {
+  const c = messageContent({
+    caller_name: "Bob Dillon",
+    caller_phone: "7205949248",
+    reason: "Calls not going through",
+    message_text: "Calls not going through\nGate code: 1234\nEmail: Bob.Dylan@gmail.com",
+  });
+  assert.equal(c.reason, "Calls not going through");
+  assert.deepEqual(c.additional, [
+    { label: "Gate code", value: "1234" },
+    { label: "Email", value: "Bob.Dylan@gmail.com" },
+  ]);
+});
+
+test("inbox preview drops label lines even when the list row has no fields", () => {
+  assert.equal(
+    reasonPreview({ caller_name: "Bob Dillon", message_text: "Calls not going through\nEmail: Bob.Dylan@gmail.com" }),
+    "Calls not going through",
+  );
+});
+
+test("a Reason field still fills the reason card when additional_fields omits it", () => {
+  const c = messageContent({
+    caller_name: "Bob Dillon",
+    caller_phone: "7205949248",
+    fields: [
+      { label: "Reason", value: "Need a refill" },
+      { label: "Email", value: "a@b.c" },
+    ],
+    additional_fields: [{ label: "Email", value: "a@b.c" }],
+  });
+  assert.equal(c.reason, "Need a refill");
+  assert.deepEqual(c.additional, [{ label: "Email", value: "a@b.c" }]);
+});
+
+test("name and phone lines in message_text are not additional information", () => {
+  const c = messageContent({
+    caller_name: "Bob Dillon",
+    caller_phone: "7205949248",
+    message_text: "Need a callback\nCaller name: Bob Dillon\nPhone: (720) 594-9248\nGate code: 9",
+  });
+  assert.equal(c.reason, "Need a callback");
+  assert.deepEqual(c.additional, [{ label: "Gate code", value: "9" }]);
+});
+
 test("initials", () => {
   assert.equal(initials("Bob Dillon"), "BD");
   assert.equal(initials("Liz"), "L");

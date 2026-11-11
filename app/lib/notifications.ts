@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { ALERT_CHANNEL_ID, DEFAULT_ALERT_PREFS, GENERAL_CHANNEL_ID, REMINDER_CHANNEL_ID, legacyServerChannelIds, retiredPrefixedChannelIds, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
+import { ALERT_CHANNEL_ID, channelMedia, DEFAULT_ALERT_PREFS, GENERAL_CHANNEL_ID, REMINDER_CHANNEL_ID, legacyServerChannelIds, retiredPrefixedChannelIds, SOUND_IDS, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
 
 /** Call once at app start. */
 export async function configureNotifications() {
@@ -101,52 +101,40 @@ async function ensureSideChannels() {
   });
 }
 
-function soundFileFor(sound: string) {
-  return sound === "mute" ? `${DEFAULT_ALERT_PREFS.sound.id}.wav` : `${sound}.wav`;
-}
-
-function patternFor(vibe: string) {
-  return vibe === "short" || vibe === "long" || vibe === "pulse" ? VIBRATION[vibe] : VIBRATION.long;
-}
-
 /**
  * Android: delete immutable pre-alarm channels, then create jic-alerts-v3 and every
  * alert-...-v1 id the portal may still send. iPhone has no channels.
+ * Sound and vibrate toggles apply to all of those alarm channels, not only v3.
  */
 export async function ensureAlertChannel(p: AlertPrefs) {
   if (Platform.OS !== "android") return;
   for (const id of retiredPrefixedChannelIds()) {
     await Notifications.deleteNotificationChannelAsync(id);
   }
-  const soundId = isSoundId(p.sound.id) ? p.sound.id : DEFAULT_ALERT_PREFS.sound.id;
-  const pattern = isVibratePattern(p.vibrate.pattern) ? p.vibrate.pattern : DEFAULT_ALERT_PREFS.vibrate.pattern;
   const alarmStream = p.ringOnVibrate !== false;
-  await recreateAlarmChannel(ALERT_CHANNEL_ID, {
-    soundFile: p.sound.enabled === false ? null : `${soundId}.wav`,
-    pattern: p.vibrate.enabled === false ? null : VIBRATION[pattern],
-    alarmStream,
-  });
+  const media = channelMedia(p);
+  await recreateAlarmChannel(ALERT_CHANNEL_ID, { ...media, alarmStream });
   for (const id of legacyServerChannelIds()) {
-    const parts = id.split("-");
-    await recreateAlarmChannel(id, { soundFile: soundFileFor(parts[1] ?? "chime"), pattern: patternFor(parts[2] ?? "long"), alarmStream });
+    await recreateAlarmChannel(id, { ...media, alarmStream });
   }
   await ensureSideChannels();
 }
 
 /** Local alert on jic-alerts-v3. The portal test push does not send channelId, so it cannot select this channel. */
 export async function scheduleAlarmTest() {
-  await ensureAlertChannel(await loadAlertPrefs());
+  const prefs = await loadAlertPrefs();
+  await ensureAlertChannel(prefs);
   const existing = await Notifications.getPermissionsAsync();
   if (!existing.granted) {
     const asked = await Notifications.requestPermissionsAsync();
     if (!asked.granted) throw new Error("Notifications are off");
   }
-  const sound = `${(await loadAlertPrefs()).sound.id}.wav`;
+  const soundOn = prefs.sound.enabled !== false;
   await Notifications.scheduleNotificationAsync({
     content: {
       title: "JIC Messages test",
       body: "This is how a new message alert sounds.",
-      sound,
+      sound: soundOn ? `${prefs.sound.id}.wav` : false,
       data: { test: true },
     },
     trigger: { channelId: ALERT_CHANNEL_ID },
@@ -190,9 +178,18 @@ export async function registerDevice(api: { registerDevice: (b: { token: string;
 }
 
 export const openSystemSettings = () => Linking.openSettings();
-/** Android: the screen where the user lets the app override Do Not Disturb. */
-export const openDndSettings = () =>
-  Platform.OS === "android" ? Linking.sendIntent("android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS") : Linking.openSettings();
+/** Android: the screen where the user lets the app override Do Not Disturb. Falls back to app settings. */
+export async function openDndSettings() {
+  try {
+    if (Platform.OS === "android") {
+      await Linking.sendIntent("android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS");
+      return;
+    }
+  } catch {
+    // Some phones do not expose the Do Not Disturb access screen.
+  }
+  await Linking.openSettings().catch(() => {});
+}
 
 /** "Mark as seen" and opening a message both stop the repeats. Returns an unsubscribe function. */
 export function listenForResponses(h: { onSeen: (alertId: string) => void; onOpen: (messageId: string) => void }) {

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { signOut } from "../../lib/auth";
-import { authorizedFetch } from "../../lib/messageApi";
+import { authorizedFetch, SignedOutError } from "../../lib/messageApi";
 import { currentSession } from "../../lib/session";
 import { loadPrefs } from "../../lib/prefsStore";
 import { Screen } from "../../components/Screen";
@@ -24,11 +24,19 @@ export default function Settings() {
         if (!cancel && session) setMe((prev) => prev ?? { name: session.email.split("@")[0], email: session.email, role: session.role || null, organization: null });
         try {
           const res = await authorizedFetch("https://jicagents.com/api/mobile/me");
+          if (res.status === 401) {
+            if (!cancel) router.replace("/");
+            return;
+          }
           if (res.ok) {
             const data = await res.json();
             if (!cancel && data?.me) setMe(data.me);
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof SignedOutError) {
+            if (!cancel) router.replace("/");
+            return;
+          }
           // Older portal without /api/mobile/me: keep the token-based card.
         }
         const prefs = await loadPrefs();
@@ -41,7 +49,7 @@ export default function Settings() {
   );
 
   function confirmSignOut() {
-    Alert.alert("Sign out?", "You will stop getting message alerts on this phone until you sign in again.", [
+    Alert.alert("Sign out?", "You will need to sign in again to read messages on this phone.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Sign out",

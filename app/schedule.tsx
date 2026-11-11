@@ -51,8 +51,8 @@ export default function MySchedule() {
       <Text style={styles.intro}>Next on-call shifts from your office calendar. Read only; changes are made in the JIC portal.</Text>
       {shifts === null ? <Text style={type.muted}>Loading…</Text> : null}
       {shifts && shifts.length === 0 ? <Card><Text style={styles.body}>{note || "No upcoming on-call shifts."}</Text></Card> : null}
-      {(shifts || []).map((shift) => (
-        <Card key={shift.id || `${shift.date}-${shift.start}`} style={[styles.shift, shift.current && styles.shiftNow]}>
+      {(shifts || []).map((shift, index) => (
+        <Card key={shift.id || `${shift.date}-${shift.start}-${index}`} style={[styles.shift, shift.current && styles.shiftNow]}>
           <View style={styles.dateBox}>
             <Text style={styles.dow}>{weekday(shift.date)}</Text>
             <Text style={styles.day}>{dayNum(shift.date)}</Text>
@@ -75,18 +75,27 @@ export default function MySchedule() {
   );
 }
 
-function parts(date: string) {
-  const [y, m, d] = date.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
+function parts(date: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || "");
+  if (!match) return null;
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
-const weekday = (date: string) => parts(date).toLocaleDateString([], { weekday: "short" });
-const month = (date: string) => parts(date).toLocaleDateString([], { month: "short" });
-const dayNum = (date: string) => String(parts(date).getDate());
+const weekday = (date: string) => parts(date)?.toLocaleDateString([], { weekday: "short" }) ?? "";
+const month = (date: string) => parts(date)?.toLocaleDateString([], { month: "short" }) ?? "";
+const dayNum = (date: string) => {
+  const parsed = parts(date);
+  return parsed ? String(parsed.getDate()) : "";
+};
 function time12(hhmm: string) {
-  const [h, m] = hhmm.split(":").map(Number);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm || "");
+  if (!match) return hhmm || "";
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h > 23 || m > 59) return hhmm;
   const suffix = h >= 12 ? "PM" : "AM";
   const hour = h % 12 || 12;
-  return `${hour}:${String(m || 0).padStart(2, "0")} ${suffix}`;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
 const styles = StyleSheet.create({

@@ -140,6 +140,7 @@ export default function MessageDetail() {
       try {
         const res = await authorizedFetch("https://jicagents.com/api/mobile/team");
         if (cancel) return;
+        if (leaveIfSignedOut(res.status)) return;
         if (res.status === 404) {
           setTeamHidden(true);
           return;
@@ -150,11 +151,10 @@ export default function MessageDetail() {
           return;
         }
         setTeam(parseTeam(await res.json()));
-      } catch {
-        if (!cancel) {
-          setTeamHidden(true);
-          say("Could not load your team");
-        }
+      } catch (error) {
+        if (cancel || leaveIfSignedOut(error)) return;
+        setTeamHidden(true);
+        say("Could not load your team");
       }
     })();
     return () => {
@@ -173,8 +173,9 @@ export default function MessageDetail() {
   useEffect(() => {
     if (!message || !messageId) return;
     const initialNote = String(message.note ?? message.dispatch_note ?? "");
-    // Only replace the box when nothing unsaved is typed in it (pull-to-refresh keeps a draft).
-    setNote((current) => (current.trim() && current.trim() !== savedNoteRef.current.trim() ? current : initialNote));
+    // Keep an unsaved draft, including a cleared box, across pull-to-refresh.
+    const previousSaved = savedNoteRef.current;
+    setNote((current) => (current.trim() !== previousSaved.trim() ? current : initialNote));
     setSavedNote(initialNote);
     savedNoteRef.current = initialNote;
     const alreadyRead = messageIsRead(message, preview.status);
@@ -182,8 +183,10 @@ export default function MessageDetail() {
     if (alreadyRead || markedRead.current === messageId) return;
     markedRead.current = messageId;
     setRead(true);
-    postRead(messageId, true).catch(() => {
+    postRead(messageId, true).catch((error) => {
+      if (markedRead.current === messageId) markedRead.current = null;
       setRead(false);
+      if (leaveIfSignedOut(error)) return;
       say("Could not update");
     });
   }, [messageId, message]);
@@ -198,8 +201,9 @@ export default function MessageDetail() {
     setRead(next);
     try {
       await postRead(messageId, next);
-    } catch {
+    } catch (error) {
       setRead(!next);
+      if (leaveIfSignedOut(error)) return;
       say("Could not update");
     }
   }
@@ -214,6 +218,7 @@ export default function MessageDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message_id: messageId, note }),
       });
+      if (leaveIfSignedOut(res.status)) return;
       if (!res.ok) {
         say("Could not save the note");
         return;
@@ -230,7 +235,8 @@ export default function MessageDetail() {
       savedNoteRef.current = stored;
       setJustSaved(true);
       say("Note saved");
-    } catch {
+    } catch (error) {
+      if (leaveIfSignedOut(error)) return;
       say("Could not save the note");
     } finally {
       setSaving(false);
@@ -257,6 +263,7 @@ export default function MessageDetail() {
         body: JSON.stringify(body),
       });
       const text = await res.text();
+      if (leaveIfSignedOut(res.status)) return;
       if (!res.ok) throw new Error(redirectErrorMessage(res.status, text));
       let sent: Method = effective;
       let fellBack = false;
@@ -270,6 +277,7 @@ export default function MessageDetail() {
       const who = firstName(person.name);
       say(fellBack ? `Sent to ${who} by ${METHOD_SHORT[sent]} (${METHOD_SHORT[effective]} was not available)` : `Sent to ${person.name} by ${METHOD_SHORT[sent]}`);
     } catch (e) {
+      if (leaveIfSignedOut(e)) return;
       say(e instanceof Error ? e.message : "Could not send. Try another way.");
     } finally {
       setBusy(false);
@@ -395,8 +403,8 @@ export default function MessageDetail() {
               accessibilityRole="button"
               accessibilityLabel={`Call ${callerLabel}`}
             >
-              <Text style={styles.callIcon}>✆</Text>
-              <Text style={styles.callText}>Call {callerLabel}</Text>
+              <Text style={[styles.callIcon, !callerPhone && styles.callTextOff]}>✆</Text>
+              <Text style={[styles.callText, !callerPhone && styles.callTextOff]}>Call {callerLabel}</Text>
             </Pressable>
             <Text style={styles.callCaption}>{HIDDEN_NUMBER_VERIFIED ? "Your number is hidden (*67)" : "Dials *67 first. Number hiding depends on your carrier."}</Text>
           </View>
@@ -536,12 +544,21 @@ export default function MessageDetail() {
   );
 }
 
+function leaveIfSignedOut(errorOrStatus: unknown): boolean {
+  if (errorOrStatus instanceof SignedOutError || errorOrStatus === 401) {
+    router.replace("/");
+    return true;
+  }
+  return false;
+}
+
 async function postRead(id: string, next: boolean) {
   const res = await authorizedFetch("https://jicagents.com/api/mobile/message-read", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, read: next }),
   });
+  if (res.status === 401) throw new SignedOutError();
   if (!res.ok) throw new Error("Could not update");
 }
 
@@ -593,6 +610,7 @@ const styles = StyleSheet.create({
   callOff: { backgroundColor: colors.surfaceHigh },
   callIcon: { fontSize: 20, color: colors.tealInk, fontWeight: "800" },
   callText: { fontSize: 17.5, fontWeight: "800", color: colors.tealInk },
+  callTextOff: { color: colors.textFaint },
   callCaption: { textAlign: "center", fontSize: 12.5, color: colors.textFaint, marginTop: space.sm },
   noteRow: { flexDirection: "row", alignItems: "flex-end", gap: space.sm },
   noteInput: { flex: 1, minHeight: 50, maxHeight: 160, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceHigh, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 12, color: colors.text, fontSize: 15.5, textAlignVertical: "top" },

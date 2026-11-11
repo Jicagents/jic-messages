@@ -4,6 +4,7 @@ import { router, useFocusEffect } from "expo-router";
 import { authorizedFetch, messagesListUrl, SignedOutError } from "../../lib/messageApi";
 import { formatUsPhone, dialDigits } from "../../lib/phone";
 import { reasonPreview } from "../../lib/messageFields";
+import { messageIsRead } from "../../lib/redirect";
 import { Avatar, ReadPill, ScreenHeader } from "../../components/ui";
 import { colors, radius, space } from "../../lib/theme";
 
@@ -23,7 +24,7 @@ type Message = {
 
 type Filter = "all" | "unread";
 
-const isUnread = (m: Message) => m.status === "new";
+const isUnread = (m: Message) => !messageIsRead({ status: m.status });
 
 export default function Inbox() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -118,7 +119,9 @@ export default function Inbox() {
           <Chip label={`Unread (${unreadCount})`} on={filter === "unread"} onPress={() => setFilter("unread")} />
         </View>
       </View>
+      {error && messages.length > 0 ? <Text style={styles.errorBanner}>{error}</Text> : null}
       <FlatList
+        style={styles.messages}
         data={shown}
         keyExtractor={(m) => m.id}
         refreshing={refreshing}
@@ -154,9 +157,9 @@ export default function Inbox() {
           );
         }}
         ListEmptyComponent={
-          loaded ? (
-            <Text style={styles.empty}>{error || (search || filter === "unread" ? "No messages match." : "No messages yet.")}</Text>
-          ) : undefined
+          <Text style={styles.empty}>
+            {!loaded ? "Loading…" : error || (search || filter === "unread" ? "No messages match." : "No messages yet.")}
+          </Text>
         }
       />
     </View>
@@ -194,6 +197,8 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: colors.teal, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 5 },
   badgeText: { color: colors.tealInk, fontSize: 12.5, fontWeight: "800" },
   controls: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
+  errorBanner: { color: colors.danger, fontSize: 14, paddingHorizontal: space.lg, paddingTop: space.md },
+  messages: { flex: 1 },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, minHeight: 48 },
   searchIcon: { color: colors.textMuted, fontSize: 20, marginRight: space.sm },
   search: { flex: 1, paddingVertical: 10, fontSize: 15.5, color: colors.text },

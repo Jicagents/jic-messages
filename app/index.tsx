@@ -1,30 +1,61 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
+import Constants from "expo-constants";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
-import { signIn, getAccess, getValidAccess } from "../lib/auth";
+import { signIn, getValidAccess } from "../lib/auth";
 import * as Notifications from "expo-notifications";
+import { authorizedFetch } from "../lib/messageApi";
 import { prepareNotifications } from "./lib/notifications";
 import { BrandLogo } from "../components/BrandLogo";
 import { PrimaryButton } from "../components/ui";
 import { BOTTOM_GAP, card, colors, radius, space, type } from "../lib/theme";
 
 const SAVED_EMAIL = "jic_saved_email";
+const REMEMBER_EMAIL = "jic_remember_email";
+
+async function loadRememberedEmail(): Promise<{ email: string; remember: boolean }> {
+  try {
+    const [saved, flag] = await Promise.all([SecureStore.getItemAsync(SAVED_EMAIL), SecureStore.getItemAsync(REMEMBER_EMAIL)]);
+    // An empty string cannot be stored on every platform. Treat it, or an explicit flag, as "don't remember".
+    if (flag === "false" || saved === "") return { email: "", remember: false };
+    if (saved) return { email: saved, remember: true };
+  } catch (e) {
+    console.log("Could not read remembered email:", e);
+  }
+  return { email: "", remember: true };
+}
+
+async function storeRememberedEmail(remember: boolean, email: string) {
+  try {
+    if (remember && email) {
+      await SecureStore.setItemAsync(SAVED_EMAIL, email);
+      await SecureStore.setItemAsync(REMEMBER_EMAIL, "true");
+      return;
+    }
+    await SecureStore.setItemAsync(REMEMBER_EMAIL, "false");
+    await SecureStore.deleteItemAsync(SAVED_EMAIL).catch(() => {});
+  } catch (e) {
+    console.log("Could not store remembered email:", e);
+  }
+}
 
 async function registerDevice() {
   try {
     await prepareNotifications();
-    const { status } = await Notifications.requestPermissionsAsync();
+    const existing = await Notifications.getPermissionsAsync();
+    const status = existing.granted ? existing.status : (await Notifications.requestPermissionsAsync()).status;
     if (status !== "granted") return;
-    const token = (await Notifications.getExpoPushTokenAsync()).data;
-    const access = await getAccess();
-    if (!access || !token) return;
-    await fetch("https://jicagents.com/api/mobile/device", {
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+    const token = (await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : {})).data;
+    if (!token) return;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver";
+    await authorizedFetch("https://jicagents.com/api/mobile/device", {
       method: "POST",
-      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ token, platform: "android", tz: "America/Denver" }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, platform: Platform.OS, tz }),
     });
   } catch (e) {
     console.log("Push registration skipped:", e);
@@ -40,33 +71,42 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
+  const manualSignIn = useRef(false);
 
   useEffect(() => {
+    let cancel = false;
     async function start() {
       try {
-        const saved = await SecureStore.getItemAsync(SAVED_EMAIL);
-        if (saved) setEmail(saved);
-        else if (saved === "") setRemember(false);
+        const remembered = await loadRememberedEmail();
+        if (cancel) return;
+        if (remembered.email) setEmail(remembered.email);
+        if (!remembered.remember) setRemember(false);
         const enabled = await SecureStore.getItemAsync("jic_biometric");
         // Access tokens expire in 15 minutes. Refresh before the inbox or a message fetch runs.
         const token = await getValidAccess();
-        if (!token) return;
+        if (cancel || manualSignIn.current || !token) return;
         if (enabled === "true") {
           const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Unlock JIC Messages" });
-          if (result.success) router.replace("/inbox");
-        } else {
-          // Still signed in (refresh token valid): stay signed in.
-          router.replace("/inbox");
+          if (!result.success || cancel || manualSignIn.current) return;
         }
+        // Stay signed in. Refresh the push token without blocking the inbox on a slow Expo request.
+        void registerDevice();
+        router.replace("/inbox");
+      } catch {
+        // A failed refresh or biometric prompt leaves the sign-in form in place.
       } finally {
-        setChecking(false);
+        if (!cancel) setChecking(false);
       }
     }
     start();
+    return () => {
+      cancel = true;
+    };
   }, []);
 
   async function handleSignIn() {
     if (loading) return;
+    manualSignIn.current = true;
     setError("");
     if (!email.trim() || !password) {
       setError("Enter your email and password.");
@@ -75,18 +115,20 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      // Remember me = keep the email filled in next time. Staying signed in works either way.
-      await SecureStore.setItemAsync(SAVED_EMAIL, remember ? email.trim() : "");
+      // Remember me keeps the email filled in next time. Staying signed in works either way.
+      await storeRememberedEmail(remember, email.trim());
       await registerDevice();
       router.replace("/inbox");
     } catch (e) {
+      manualSignIn.current = false;
       setError(e instanceof Error && e.message === "Invalid credentials" ? "That email and password don't match. Try again." : e instanceof Error ? e.message : "Sign-in failed");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
         contentContainerStyle={[styles.page, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + BOTTOM_GAP }]}
         keyboardShouldPersistTaps="handled"
@@ -143,7 +185,7 @@ export default function Login() {
           </Pressable>
 
           {error ? <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text> : null}
-          <PrimaryButton label="Sign In" onPress={handleSignIn} busy={loading} disabled={checking && !email} />
+          <PrimaryButton label="Sign In" onPress={handleSignIn} busy={loading} />
         </View>
         {checking ? <ActivityIndicator color={colors.teal} style={{ marginTop: space.xl }} /> : null}
       </ScrollView>

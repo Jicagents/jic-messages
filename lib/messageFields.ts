@@ -99,24 +99,56 @@ export function additionalFields(input: { reason?: unknown; message_text?: unkno
 
 export type MessageField = { label?: string; value?: string };
 
+/** "Label: value" lines written into message_text by the old API, which often has no fields array. */
+function labelValueLines(text: string): ViewField[] {
+  const out: ViewField[] = [];
+  const parts = text.split(/\r?\n/).flatMap((line) => line.split(/\s*;\s+(?=[^:;]{1,60}:)/));
+  for (const segment of parts) {
+    const pair = segment.trim().match(/^([^:]{1,60}):\s*(.+)$/);
+    if (!pair) continue;
+    const label = pair[1].trim();
+    const value = pair[2].trim();
+    if (!label || !value || /^https?$/i.test(label)) continue;
+    out.push({ label, value });
+  }
+  return out;
+}
+
+/** Form fields first, then label lines from message_text that the form did not already include. */
+function mergeFields(primary: unknown, text: string): ViewField[] {
+  const out = cleanFields(primary);
+  const seen = new Set(out.map((field) => `${bareLabel(field.label)}\u0000${norm(field.value)}`));
+  for (const field of labelValueLines(text)) {
+    const key = `${bareLabel(field.label)}\u0000${norm(field.value)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(field);
+  }
+  return out;
+}
+
 /** Everything the detail screen and inbox need, from whatever the API returned. */
 export function messageContent(message: Record<string, unknown> | null | undefined, preview: { caller_name?: string; caller_phone?: string; message_text?: string } = {}) {
   const m = message || {};
   const callerName = str(m.caller_name) || str(preview.caller_name);
   const callerPhone = str(m.caller_phone) || str(preview.caller_phone) || str(m.from_number);
+  const messageText = str(m.message_text) || str(preview.message_text);
+  // A newer server sends additional_fields already cleaned. An older one leaves extras as
+  // "Label: value" lines inside message_text, so harvest those only when the server did not.
+  // The reason still comes from `reason`, a Reason field, or message_text — never from additional_fields alone.
+  const serverExtras = Array.isArray(m.additional_fields) ? cleanFields(m.additional_fields) : null;
+  const stored = serverExtras ? cleanFields(m.fields) : mergeFields(m.fields, messageText);
   const input = {
     reason: str(m.reason),
-    message_text: str(m.message_text) || str(preview.message_text),
-    fields: m.fields,
+    message_text: messageText,
+    fields: stored,
     caller_name: callerName,
     caller_phone: callerPhone,
     from_number: m.from_number,
   };
   const reason = reasonOnly(input);
-  // A newer server sends additional_fields already cleaned; run the same rules again so a stale
-  // or older server can never put name, phone, or the reason back on screen.
-  const serverExtras = Array.isArray(m.additional_fields) ? m.additional_fields : null;
-  const additional = additionalFields({ ...input, fields: serverExtras ?? m.fields });
+  // Run the same rules again so a stale or older server can never put name, phone, or the reason back on screen.
+  const additional = additionalFields({ ...input, fields: serverExtras ?? stored });
   return { callerName, callerPhone, reason, additional, formName: str(m.form_name) };
 }
 
