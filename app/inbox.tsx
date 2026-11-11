@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput, Modal, Image } from "react-native";
 import { router } from "expo-router";
 import { authorizedFetch, messagesListUrl, SignedOutError } from "../lib/messageApi";
+import { formatUsPhone } from "../lib/phone";
 
 type Message = {
   id: string;
@@ -88,7 +89,7 @@ export default function Inbox() {
                 <Text style={[styles.name, item.status === "new" && styles.nameUnread]}>{item.caller_name || "Unknown"}</Text>
                 <Text style={styles.time}>{formatTime(item.created_at)}</Text>
               </View>
-              <Text style={styles.phone}>{item.caller_phone}</Text>
+              <Text style={styles.phone}>{formatUsPhone(item.caller_phone)}</Text>
               <Text style={styles.preview} numberOfLines={2}>{item.message_text}</Text>
             </View>
             <Text style={styles.chevron}>›</Text>

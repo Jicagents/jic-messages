@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Linking, ScrollView, Image, TextInput, Alert, RefreshControl, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { authorizedFetch, formatApiError, isMessageUuid, messageDetailUrl, routeParam, SignedOutError } from "../../lib/messageApi";
+import { fieldsToShow } from "../../lib/messageFields";
+import { dialDigits, formatUsPhone } from "../../lib/phone";
 
 export default function MessageDetail() {
   const params = useLocalSearchParams<{
@@ -78,8 +80,8 @@ export default function MessageDetail() {
     load();
   }, [messageId]);
 
-  function dialBlocked() {
-    const phone = String(message?.caller_phone || "").replace(/\D/g, "");
+  function dialBlocked(raw?: string) {
+    const phone = dialDigits(raw || message?.caller_phone || preview.caller_phone || "");
     if (!phone) return Alert.alert("No phone number");
     Linking.openURL(`tel:*67${phone}`);
   }
@@ -156,7 +158,12 @@ export default function MessageDetail() {
   }
   if (!message) return <View style={styles.container}><Text>Loading...</Text></View>;
 
-  const fields = Array.isArray(message.fields) ? message.fields : [];
+  const callerName = message.caller_name || preview.caller_name || "Unknown";
+  const callerPhone = message.caller_phone || preview.caller_phone || "";
+  const reason = message.message_text || preview.message_text || "";
+  const createdAt = message.created_at || preview.created_at;
+  const status = message.status || preview.status;
+  const fields = fieldsToShow(Array.isArray(message.fields) ? message.fields : [], reason);
 
   return (
     <ScrollView
@@ -171,29 +178,36 @@ export default function MessageDetail() {
         <View style={styles.callerRow}>
           <View style={styles.avatar}><Text style={styles.avatarText}>{message.caller_name?.[0] || "?"}</Text></View>
           <View>
-            <Text style={styles.name}>{message.caller_name || "Unknown"}</Text>
-            <TouchableOpacity onPress={dialBlocked}>
-              <Text style={styles.phone}>{message.caller_phone} (tap to call *67)</Text>
-            </TouchableOpacity>
-            <Text style={styles.date}>{new Date(message.created_at).toLocaleString()}</Text>
+            <Text style={styles.name}>{callerName}</Text>
+            {callerPhone ? (
+              <TouchableOpacity onPress={() => dialBlocked(callerPhone)}>
+                <Text style={styles.phone}>{formatUsPhone(callerPhone)}</Text>
+              </TouchableOpacity>
+            ) : null}
+            {createdAt ? <Text style={styles.date}>{new Date(createdAt).toLocaleString()}</Text> : null}
           </View>
         </View>
         <View style={styles.statusBadge}>
-          <Text style={styles.statusText}>✓ {message.status === "new" ? "New" : "Read"}</Text>
+          <Text style={styles.statusText}>✓ {status === "new" ? "New" : "Read"}</Text>
         </View>
         <Text style={styles.section}>Message Details</Text>
-        {fields.map((f: any, i: number) => (
+        {fields.map((f, i) => (
           <View key={i} style={styles.field}>
             <Text style={styles.fieldLabel}>{f.label}</Text>
             <Text style={styles.fieldValue}>{f.value}</Text>
           </View>
         ))}
-        {message.message_text && (
+        {reason ? (
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Reason for Calling</Text>
-            <Text style={styles.fieldValue}>{message.message_text}</Text>
+            <Text style={styles.fieldValue}>{reason}</Text>
           </View>
-        )}
+        ) : null}
+
+        <Text style={styles.section}>Calls</Text>
+        <TouchableOpacity style={styles.callBtn} onPress={() => dialBlocked(callerPhone)}>
+          <Text style={styles.callBtnText}>Call Back (*67)</Text>
+        </TouchableOpacity>
 
         <Text style={styles.section}>Dispatch Note</Text>
         <TextInput
@@ -219,10 +233,6 @@ export default function MessageDetail() {
             <Text style={styles.redirectText}>Call</Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity style={styles.callBtn} onPress={dialBlocked}>
-          <Text style={styles.callBtnText}>Call Back (*67)</Text>
-        </TouchableOpacity>
       </View>
     </ScrollView>
   );
