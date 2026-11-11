@@ -5,9 +5,11 @@ import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signIn, getAccess } from "../lib/auth";
 import * as Notifications from "expo-notifications";
+import { prepareNotifications } from "./lib/notifications";
 
 async function registerDevice() {
   try {
+    await prepareNotifications();
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== "granted") return;
     const token = (await Notifications.getExpoPushTokenAsync()).data;

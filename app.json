@@ -35,7 +35,19 @@
       "expo-secure-store",
       "expo-local-authentication",
       "expo-status-bar",
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "jic-alerts-v3-chime-long-ovr",
+          "sounds": [
+            "./assets/sounds/chime.wav",
+            "./assets/sounds/ping.wav",
+            "./assets/sounds/bell.wav",
+            "./assets/sounds/siren.wav",
+            "./assets/sounds/alarm.wav"
+          ]
+        }
+      ]
     ],
     "scheme": "jicmessages",
     "extra": {

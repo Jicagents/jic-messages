@@ -2,8 +2,9 @@
 import * as Notifications from "expo-notifications";
 // import * as Device from "expo-device";
 import Constants from "expo-constants";
+import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { channelFor, VIBRATION, type AlertPrefs } from "./alertChannel";
+import { channelFor, DEFAULT_ALERT_PREFS, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
 
 /** Call once at app start. */
 export async function configureNotifications() {
@@ -18,13 +19,39 @@ export async function configureNotifications() {
   ]);
 }
 
-/**
- * Android: create (once) the channel that matches the user's current settings.
- * Channels cannot be edited later, so each combination gets its own id. Call at startup and whenever settings change.
- * iPhone has no channels, so this does nothing there.
- */
-export async function ensureAlertChannel(p: AlertPrefs) {
-  if (Platform.OS !== "android") return;
+const VIBRATE_PATTERNS: readonly VibratePattern[] = ["short", "long", "pulse"];
+
+function isSoundId(value: unknown): value is SoundId {
+  return typeof value === "string" && (SOUND_IDS as readonly string[]).includes(value);
+}
+
+function isVibratePattern(value: unknown): value is VibratePattern {
+  return typeof value === "string" && (VIBRATE_PATTERNS as readonly string[]).includes(value);
+}
+
+/** Prefs saved by Settings. Invalid values fall back to the defaults so the channel id stays known. */
+export async function loadAlertPrefs(): Promise<AlertPrefs> {
+  const saved = await SecureStore.getItemAsync("jic_prefs");
+  if (!saved) return DEFAULT_ALERT_PREFS;
+  try {
+    const parsed = JSON.parse(saved) as Partial<AlertPrefs>;
+    return {
+      override: parsed.override !== false,
+      sound: {
+        enabled: parsed.sound?.enabled !== false,
+        id: isSoundId(parsed.sound?.id) ? parsed.sound.id : DEFAULT_ALERT_PREFS.sound.id,
+      },
+      vibrate: {
+        enabled: parsed.vibrate?.enabled !== false,
+        pattern: isVibratePattern(parsed.vibrate?.pattern) ? parsed.vibrate.pattern : DEFAULT_ALERT_PREFS.vibrate.pattern,
+      },
+    };
+  } catch {
+    return DEFAULT_ALERT_PREFS;
+  }
+}
+
+async function createAlertChannel(p: AlertPrefs) {
   await Notifications.setNotificationChannelAsync(channelFor(p), {
     name: `Message alerts${p.override ? " (override)" : ""}`,
     description: "New messages from callers",
@@ -34,12 +61,34 @@ export async function ensureAlertChannel(p: AlertPrefs) {
     vibrationPattern: p.vibrate.enabled ? VIBRATION[p.vibrate.pattern] : undefined,
     bypassDnd: true,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    enableLights: true, lightColor: "#14B8A6",
+    enableLights: true,
+    lightColor: "#14B8A6",
     audioAttributes: {
       usage: Notifications.AndroidAudioUsage.ALARM,
       contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      flags: {
+        enforceAudibility: true,
+        requestHardwareAudioVideoSynchronization: false,
+      },
     },
   });
+}
+
+/**
+ * Android: create the channel that matches the user's current settings, plus the default
+ * channel named in app.json. Channels cannot be edited later, so each combination gets its own id.
+ * iPhone has no channels, so this does nothing there.
+ */
+export async function ensureAlertChannel(p: AlertPrefs) {
+  if (Platform.OS !== "android") return;
+  await createAlertChannel(p);
+  if (channelFor(p) !== channelFor(DEFAULT_ALERT_PREFS)) await createAlertChannel(DEFAULT_ALERT_PREFS);
+}
+
+/** Call once at startup, and before requesting an Expo push token. */
+export async function prepareNotifications() {
+  await configureNotifications();
+  await ensureAlertChannel(await loadAlertPrefs());
 }
 
 export type PermissionStatus = {
@@ -63,6 +112,7 @@ export const requestPermissions = () =>
 /** Get the Expo push token and register this device with the server. Only registers if permission is granted. */
 export async function registerDevice(api: { registerDevice: (b: { token: string; platform: string; tz: string }) => Promise<void> }) {
   // if (!Device.isDevice) return null;
+  await prepareNotifications();
   const perm = await Notifications.getPermissionsAsync();
   if (!perm.granted) return null;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? (Constants as any).easConfig?.projectId;

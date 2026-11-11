@@ -4,12 +4,11 @@ import { router } from "expo-router";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signOut, getAccess } from "../lib/auth";
-import { SOUND_IDS, VIBRATION, channelFor, AlertPrefs } from "./lib/alertChannel";
+import { DEFAULT_ALERT_PREFS, SOUND_IDS, type AlertPrefs } from "./lib/alertChannel";
+import { ensureAlertChannel } from "./lib/notifications";
 
 const DEFAULT_PREFS: AlertPrefs & { repeatMin: number } = {
-  override: true,
-  sound: { enabled: true, id: "chime" },
-  vibrate: { enabled: true, pattern: "long" },
+  ...DEFAULT_ALERT_PREFS,
   repeatMin: 0,
 };
 
@@ -34,6 +33,7 @@ export default function Settings() {
   async function savePrefs(next: typeof DEFAULT_PREFS) {
     setPrefs(next);
     await SecureStore.setItemAsync("jic_prefs", JSON.stringify(next));
+    await ensureAlertChannel(next).catch(() => {});
     const token = await getAccess();
     if (token) {
       await fetch("https://jicagents.com/api/mobile/prefs", {
