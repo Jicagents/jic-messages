@@ -4,7 +4,7 @@ import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Linking, Platform } from "react-native";
-import { channelFor, DEFAULT_ALERT_PREFS, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
+import { ALERT_CHANNEL_ID, DEFAULT_ALERT_PREFS, legacyServerChannelIds, retiredPrefixedChannelIds, SOUND_IDS, VIBRATION, type AlertPrefs, type SoundId, type VibratePattern } from "./alertChannel";
 
 /** Call once at app start. */
 export async function configureNotifications() {
@@ -51,14 +51,14 @@ export async function loadAlertPrefs(): Promise<AlertPrefs> {
   }
 }
 
-async function createAlertChannel(p: AlertPrefs) {
-  await Notifications.setNotificationChannelAsync(channelFor(p), {
-    name: `Message alerts${p.override ? " (override)" : ""}`,
+function alarmChannelInput(soundFile: string, pattern: number[]) {
+  return {
+    name: "Message alerts",
     description: "New messages from callers",
     importance: Notifications.AndroidImportance.MAX,
-    sound: p.sound.enabled ? `${p.sound.id}.wav` : null,
-    enableVibrate: p.vibrate.enabled,
-    vibrationPattern: p.vibrate.enabled ? VIBRATION[p.vibrate.pattern] : undefined,
+    sound: soundFile,
+    enableVibrate: true,
+    vibrationPattern: pattern,
     bypassDnd: true,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     enableLights: true,
@@ -71,18 +71,38 @@ async function createAlertChannel(p: AlertPrefs) {
         requestHardwareAudioVideoSynchronization: false,
       },
     },
-  });
+  };
+}
+
+async function recreateAlarmChannel(id: string, soundFile: string, pattern: number[]) {
+  await Notifications.deleteNotificationChannelAsync(id);
+  await Notifications.setNotificationChannelAsync(id, alarmChannelInput(soundFile, pattern));
+}
+
+function soundFileFor(sound: string) {
+  return sound === "mute" ? `${DEFAULT_ALERT_PREFS.sound.id}.wav` : `${sound}.wav`;
+}
+
+function patternFor(vibe: string) {
+  return vibe === "short" || vibe === "long" || vibe === "pulse" ? VIBRATION[vibe] : VIBRATION.long;
 }
 
 /**
- * Android: create the channel that matches the user's current settings, plus the default
- * channel named in app.json. Channels cannot be edited later, so each combination gets its own id.
- * iPhone has no channels, so this does nothing there.
+ * Android: delete immutable pre-alarm channels, then create jic-alerts-v3 and every
+ * alert-...-v1 id the portal may still send. iPhone has no channels.
  */
 export async function ensureAlertChannel(p: AlertPrefs) {
   if (Platform.OS !== "android") return;
-  await createAlertChannel(p);
-  if (channelFor(p) !== channelFor(DEFAULT_ALERT_PREFS)) await createAlertChannel(DEFAULT_ALERT_PREFS);
+  for (const id of retiredPrefixedChannelIds()) {
+    await Notifications.deleteNotificationChannelAsync(id);
+  }
+  const soundId = isSoundId(p.sound.id) ? p.sound.id : DEFAULT_ALERT_PREFS.sound.id;
+  const pattern = isVibratePattern(p.vibrate.pattern) ? p.vibrate.pattern : DEFAULT_ALERT_PREFS.vibrate.pattern;
+  await recreateAlarmChannel(ALERT_CHANNEL_ID, `${soundId}.wav`, VIBRATION[pattern]);
+  for (const id of legacyServerChannelIds()) {
+    const parts = id.split("-");
+    await recreateAlarmChannel(id, soundFileFor(parts[1] ?? "chime"), patternFor(parts[2] ?? "long"));
+  }
 }
 
 /** Call once at startup, and before requesting an Expo push token. */
@@ -101,7 +121,7 @@ export async function getPermissionStatus(p: AlertPrefs): Promise<PermissionStat
   const perm = await Notifications.getPermissionsAsync();
   const out: PermissionStatus = { notifications: perm.granted ? "granted" : perm.canAskAgain ? "undetermined" : "denied", criticalAlerts: null, overrideDnd: null };
   if (Platform.OS === "ios") out.criticalAlerts = !!(perm as any).ios?.allowsCriticalAlerts;
-  if (Platform.OS === "android") out.overrideDnd = !!(await Notifications.getNotificationChannelAsync(channelFor(p)))?.bypassDnd;
+  if (Platform.OS === "android") out.overrideDnd = !!(await Notifications.getNotificationChannelAsync(ALERT_CHANNEL_ID))?.bypassDnd;
   return out;
 }
 

@@ -38,7 +38,7 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "jic-alerts-v3-chime-long-ovr",
+          "defaultChannel": "jic-alerts-v3",
           "sounds": [
             "./assets/sounds/chime.wav",
             "./assets/sounds/ping.wav",

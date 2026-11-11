@@ -1,8 +1,7 @@
-// Shared with jic-agents-v3 (jic-site/src/server/alertChannel.ts, used by jic-site/src/server/push.ts).
-// Keep channelFor identical. Android notification channels cannot be edited after they are created,
-// so every combination of sound / vibration / override gets its own id. v1 channels were created
-// before alarm-stream audio and cannot pick up that change.
-export const ALERT_CHANNEL_PREFIX = "jic-alerts-v3";
+// The phone's alarm channel. Portal push in jic-site/src/server/push.ts should send this
+// channelId. Until it does, it still sends alert-...-v1 from jic-site/src/server/alertChannel.ts;
+// legacyServerChannelIds() is that full set, and the app creates each one.
+export const ALERT_CHANNEL_ID = "jic-alerts-v3";
 export const SOUND_IDS = ["chime", "ping", "bell", "siren", "alarm"] as const;
 export type SoundId = (typeof SOUND_IDS)[number];
 export type VibratePattern = "short" | "long" | "pulse";
@@ -25,6 +24,30 @@ export const DEFAULT_ALERT_PREFS: AlertPrefs = {
   vibrate: { enabled: true, pattern: "long" },
 };
 
-/** Example for the defaults: jic-alerts-v3-chime-long-ovr. app.json defaultChannel must match channelFor(DEFAULT_ALERT_PREFS). */
-export const channelFor = (p: AlertPrefs) =>
-  `${ALERT_CHANNEL_PREFIX}-${p.sound.enabled ? p.sound.id : "mute"}-${p.vibrate.enabled ? p.vibrate.pattern : "still"}-${p.override ? "ovr" : "std"}`;
+const LEGACY_SOUNDS = [...SOUND_IDS, "mute"] as const;
+const LEGACY_VIBES = ["short", "long", "pulse", "still"] as const;
+const LEGACY_MODES = ["ovr", "std"] as const;
+
+/** Every channelId jic-site/src/server/alertChannel.ts can emit while CH_VERSION is v1. */
+export function legacyServerChannelIds(): string[] {
+  const ids: string[] = [];
+  for (const sound of LEGACY_SOUNDS) {
+    for (const vibe of LEGACY_VIBES) {
+      for (const mode of LEGACY_MODES) ids.push(`alert-${sound}-${vibe}-${mode}-v1`);
+    }
+  }
+  return ids;
+}
+
+/** Ids from the short-lived jic-alerts-v3-<prefs> scheme. Deleted, not recreated. */
+export function retiredPrefixedChannelIds(): string[] {
+  const ids: string[] = [];
+  for (const sound of LEGACY_SOUNDS) {
+    for (const vibe of LEGACY_VIBES) {
+      for (const mode of LEGACY_MODES) ids.push(`${ALERT_CHANNEL_ID}-${sound}-${vibe}-${mode}`);
+    }
+  }
+  return ids;
+}
+
+export const channelFor = (_p?: AlertPrefs) => ALERT_CHANNEL_ID;
