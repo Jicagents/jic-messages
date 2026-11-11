@@ -26,6 +26,8 @@ export default function MessageDetail() {
   const [errorText, setErrorText] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+  const [redirectId, setRedirectId] = useState("text_mobile");
   const [refreshing, setRefreshing] = useState(false);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const message = loaded?.id === messageId ? loaded.message : null;
@@ -80,6 +82,12 @@ export default function MessageDetail() {
     load();
   }, [messageId]);
 
+  useEffect(() => {
+    if (!message) return;
+    const choices = choicesFor(message);
+    setRedirectId((current) => (choices.some((choice) => choice.id === current) ? current : choices[0]?.id ?? "text_mobile"));
+  }, [message]);
+
   function dialBlocked(raw?: string) {
     const phone = dialDigits(raw || message?.caller_phone || preview.caller_phone || "");
     if (!phone) return Alert.alert("No phone number");
@@ -113,19 +121,26 @@ export default function MessageDetail() {
     setSaving(false);
   }
 
-  async function redirect(channel: string) {
+  async function sendRedirect(choice: RedirectChoice) {
     if (!messageId) return;
+    setRedirecting(true);
     try {
+      const body: { message_id: string; channel: string; target_user_id?: string } = {
+        message_id: messageId,
+        channel: choice.channel,
+      };
+      if (choice.userId) body.target_user_id = choice.userId;
       const res = await authorizedFetch("https://jicagents.com/api/mobile/redirect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message_id: messageId, channel }),
+        body: JSON.stringify(body),
       });
-      if (res.ok) Alert.alert("Redirected", `Sent via ${channel}`);
+      if (res.ok) Alert.alert("Redirected", choice.name);
       else Alert.alert("Failed", formatApiError(res.status, await res.text()));
     } catch {
       Alert.alert("Failed", "Could not redirect");
     }
+    setRedirecting(false);
   }
 
   if (!messageId || (phase === "loading" && !message)) {
@@ -164,6 +179,7 @@ export default function MessageDetail() {
   const createdAt = message.created_at || preview.created_at;
   const status = message.status || preview.status;
   const fields = fieldsToShow(Array.isArray(message.fields) ? message.fields : [], reason);
+  const redirectChoices = choicesFor(message);
 
   return (
     <ScrollView
@@ -222,17 +238,24 @@ export default function MessageDetail() {
         </TouchableOpacity>
 
         <Text style={styles.section}>Redirect</Text>
-        <View style={styles.redirectRow}>
-          <TouchableOpacity style={styles.redirectBtn} onPress={() => redirect("text_mobile")}>
-            <Text style={styles.redirectText}>Text</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.redirectBtn} onPress={() => redirect("email")}>
-            <Text style={styles.redirectText}>Email</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.redirectBtn} onPress={() => redirect("call_mobile")}>
-            <Text style={styles.redirectText}>Call</Text>
-          </TouchableOpacity>
-        </View>
+        {redirectChoices.map((choice) => {
+          const selected = redirectId === choice.id;
+          return (
+            <TouchableOpacity key={choice.id} style={[styles.choice, selected && styles.choiceOn]} onPress={() => setRedirectId(choice.id)}>
+              <Text style={[styles.choiceText, selected && styles.choiceTextOn]}>{choice.name}{choice.preferred ? " · preferred" : ""}</Text>
+            </TouchableOpacity>
+          );
+        })}
+        <TouchableOpacity
+          style={styles.noteBtn}
+          disabled={redirecting}
+          onPress={() => {
+            const choice = redirectChoices.find((item) => item.id === redirectId) ?? redirectChoices[0];
+            if (choice) sendRedirect(choice);
+          }}
+        >
+          <Text style={styles.noteBtnText}>{redirecting ? "Sending..." : "Redirect"}</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -267,6 +290,40 @@ const styles = StyleSheet.create({
   redirectRow: { flexDirection: "row", gap: 8 },
   redirectBtn: { flex: 1, backgroundColor: "#fff", borderRadius: 8, padding: 12, alignItems: "center", borderWidth: 1, borderColor: "#14b8a6" },
   redirectText: { color: "#14b8a6", fontWeight: "600" },
-  callBtn: { backgroundColor: "#14b8a6", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 16, marginBottom: 32 },
+  callBtn: { backgroundColor: "#14b8a6", borderRadius: 8, padding: 14, alignItems: "center", marginBottom: 8 },
   callBtnText: { color: "#0c2340", fontWeight: "700" },
+  choice: { backgroundColor: "#fff", borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 6, borderWidth: 1, borderColor: "#e5e7eb" },
+  choiceOn: { borderColor: "#14b8a6", backgroundColor: "#e0f2f1" },
+  choiceText: { color: "#0c2340", fontSize: 15 },
+  choiceTextOn: { fontWeight: "700" },
 });
+
+type RedirectChoice = { id: string; name: string; channel: string; userId?: string; preferred?: boolean };
+
+const DELIVERY: RedirectChoice[] = [
+  { id: "text_mobile", name: "Text", channel: "text_mobile" },
+  { id: "email", name: "Email", channel: "email" },
+  { id: "call_mobile", name: "Call", channel: "call_mobile" },
+];
+
+function choicesFor(message: any): RedirectChoice[] {
+  const raw = message?.redirect_targets ?? message?.staff ?? message?.team;
+  if (!Array.isArray(raw)) return DELIVERY;
+  const preferredId = String(message?.preferred_redirect_id ?? message?.preferred_target_id ?? "");
+  const people: RedirectChoice[] = [];
+  for (const item of raw) {
+    const userId = String(item?.id ?? item?.user_id ?? "");
+    const name = String(item?.name ?? item?.full_name ?? "").trim();
+    if (!userId || !name) continue;
+    people.push({
+      id: userId,
+      name,
+      channel: String(item?.channel ?? "text_mobile"),
+      userId,
+      preferred: userId === preferredId || item?.preferred === true,
+    });
+  }
+  if (!people.length) return DELIVERY;
+  people.sort((a, b) => Number(b.preferred) - Number(a.preferred));
+  return people;
+}
