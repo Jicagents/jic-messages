@@ -47,7 +47,8 @@
             "./assets/sounds/alarm.wav"
           ]
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "scheme": "jicmessages",
     "extra": {

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { colors, radius, space } from "../lib/theme";
 

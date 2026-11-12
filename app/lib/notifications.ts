@@ -1,5 +1,20 @@
 // app/lib/notifications.ts  (React Native / Expo, expo-notifications)
-import * as Notifications from "expo-notifications";
+import {
+  AndroidAudioContentType,
+  AndroidAudioUsage,
+  AndroidImportance,
+  AndroidNotificationVisibility,
+  addNotificationResponseReceivedListener,
+  deleteNotificationChannelAsync,
+  getExpoPushTokenAsync,
+  getNotificationChannelAsync,
+  getPermissionsAsync,
+  requestPermissionsAsync,
+  scheduleNotificationAsync,
+  setNotificationCategoryAsync,
+  setNotificationChannelAsync,
+  setNotificationHandler,
+} from "expo-notifications";
 // import * as Device from "expo-device";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
@@ -8,12 +23,12 @@ import { ALERT_CHANNEL_ID, channelMedia, DEFAULT_ALERT_PREFS, GENERAL_CHANNEL_ID
 
 /** Call once at app start. */
 export async function configureNotifications() {
-  Notifications.setNotificationHandler({
+  setNotificationHandler({
     handleNotification: async () =>
       // Show a banner and play the sound even when the app is open. (SDK < 53: use shouldShowAlert instead of Banner/List.)
       ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: true }) as any,
   });
-  await Notifications.setNotificationCategoryAsync("alert", [
+  await setNotificationCategoryAsync("alert", [
     { identifier: "seen", buttonTitle: "Mark as seen", options: { opensAppToForeground: false } },
     { identifier: "open", buttonTitle: "Open", options: { opensAppToForeground: true } },
   ]);
@@ -52,26 +67,26 @@ export async function loadAlertPrefs(): Promise<AlertPrefs> {
   }
 }
 
-type ChannelOpts = { soundFile: string | null; pattern: number[] | null; alarmStream: boolean };
+type ChannelOpts = { soundFile: string | null; pattern: number[] | null; alarmStream: boolean; name?: string; description?: string };
 
-function alarmChannelInput({ soundFile, pattern, alarmStream }: ChannelOpts) {
+function alarmChannelInput({ soundFile, pattern, alarmStream, name, description }: ChannelOpts) {
   return {
-    name: "Message alerts",
-    description: "New messages from callers",
-    importance: Notifications.AndroidImportance.MAX,
+    name: name ?? "Message alerts",
+    description: description ?? "New messages from callers",
+    importance: AndroidImportance.MAX,
     sound: soundFile,
     enableVibrate: !!pattern,
     vibrationPattern: pattern ?? undefined,
     // Only takes effect if the user grants "Do Not Disturb access" to the app in Android settings.
     bypassDnd: true,
     // Lock screen shows "JIC Messages" only; push bodies are generic anyway.
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    lockscreenVisibility: AndroidNotificationVisibility.PRIVATE,
     enableLights: true,
     lightColor: "#00C7C7",
     audioAttributes: {
       // ALARM plays at alarm volume, so it rings when the ringer is on vibrate. NOTIFICATION follows the ringer.
-      usage: alarmStream ? Notifications.AndroidAudioUsage.ALARM : Notifications.AndroidAudioUsage.NOTIFICATION,
-      contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      usage: alarmStream ? AndroidAudioUsage.ALARM : AndroidAudioUsage.NOTIFICATION,
+      contentType: AndroidAudioContentType.SONIFICATION,
       flags: {
         enforceAudibility: alarmStream,
         requestHardwareAudioVideoSynchronization: false,
@@ -81,23 +96,23 @@ function alarmChannelInput({ soundFile, pattern, alarmStream }: ChannelOpts) {
 }
 
 async function recreateAlarmChannel(id: string, opts: ChannelOpts) {
-  await Notifications.deleteNotificationChannelAsync(id);
-  await Notifications.setNotificationChannelAsync(id, alarmChannelInput(opts));
+  await deleteNotificationChannelAsync(id);
+  await setNotificationChannelAsync(id, alarmChannelInput(opts));
 }
 
-async function ensureSideChannels() {
-  await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
+async function ensureSideChannels(opts: ChannelOpts) {
+  // Reminders use the same sound, vibration and alarm-volume setting as new message alerts, so they
+  // are heard on vibrate too. Channel audio is immutable after creation, so delete and recreate.
+  await recreateAlarmChannel(REMINDER_CHANNEL_ID, {
+    ...opts,
     name: "Unread reminders",
     description: "Reminders about messages nobody has opened yet",
-    importance: Notifications.AndroidImportance.HIGH,
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
-    enableVibrate: true,
   });
-  await Notifications.setNotificationChannelAsync(GENERAL_CHANNEL_ID, {
+  await setNotificationChannelAsync(GENERAL_CHANNEL_ID, {
     name: "General",
     description: "Tests and app information",
-    importance: Notifications.AndroidImportance.DEFAULT,
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    importance: AndroidImportance.DEFAULT,
+    lockscreenVisibility: AndroidNotificationVisibility.PRIVATE,
   });
 }
 
@@ -109,7 +124,7 @@ async function ensureSideChannels() {
 export async function ensureAlertChannel(p: AlertPrefs) {
   if (Platform.OS !== "android") return;
   for (const id of retiredPrefixedChannelIds()) {
-    await Notifications.deleteNotificationChannelAsync(id);
+    await deleteNotificationChannelAsync(id);
   }
   const alarmStream = p.ringOnVibrate !== false;
   const media = channelMedia(p);
@@ -117,20 +132,20 @@ export async function ensureAlertChannel(p: AlertPrefs) {
   for (const id of legacyServerChannelIds()) {
     await recreateAlarmChannel(id, { ...media, alarmStream });
   }
-  await ensureSideChannels();
+  await ensureSideChannels({ ...media, alarmStream });
 }
 
 /** Local alert on jic-alerts-v3. The portal test push does not send channelId, so it cannot select this channel. */
 export async function scheduleAlarmTest() {
   const prefs = await loadAlertPrefs();
   await ensureAlertChannel(prefs);
-  const existing = await Notifications.getPermissionsAsync();
+  const existing = await getPermissionsAsync();
   if (!existing.granted) {
-    const asked = await Notifications.requestPermissionsAsync();
+    const asked = await requestPermissionsAsync();
     if (!asked.granted) throw new Error("Notifications are off");
   }
   const soundOn = prefs.sound.enabled !== false;
-  await Notifications.scheduleNotificationAsync({
+  await scheduleNotificationAsync({
     content: {
       title: "JIC Messages test",
       body: "This is how a new message alert sounds.",
@@ -154,25 +169,25 @@ export type PermissionStatus = {
 };
 
 export async function getPermissionStatus(p: AlertPrefs): Promise<PermissionStatus> {
-  const perm = await Notifications.getPermissionsAsync();
+  const perm = await getPermissionsAsync();
   const out: PermissionStatus = { notifications: perm.granted ? "granted" : perm.canAskAgain ? "undetermined" : "denied", criticalAlerts: null, overrideDnd: null };
   if (Platform.OS === "ios") out.criticalAlerts = !!(perm as any).ios?.allowsCriticalAlerts;
-  if (Platform.OS === "android") out.overrideDnd = !!(await Notifications.getNotificationChannelAsync(ALERT_CHANNEL_ID))?.bypassDnd;
+  if (Platform.OS === "android") out.overrideDnd = !!(await getNotificationChannelAsync(ALERT_CHANNEL_ID))?.bypassDnd;
   return out;
 }
 
 /** Must be called from a button tap. Also asks for Critical Alerts; iOS ignores that until Apple approves the entitlement. */
 export const requestPermissions = () =>
-  Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: true, allowSound: true, allowCriticalAlerts: true } } as any);
+  requestPermissionsAsync({ ios: { allowAlert: true, allowBadge: true, allowSound: true, allowCriticalAlerts: true } } as any);
 
 /** Get the Expo push token and register this device with the server. Only registers if permission is granted. */
 export async function registerDevice(api: { registerDevice: (b: { token: string; platform: string; tz: string }) => Promise<void> }) {
   // if (!Device.isDevice) return null;
   await prepareNotifications();
-  const perm = await Notifications.getPermissionsAsync();
+  const perm = await getPermissionsAsync();
   if (!perm.granted) return null;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? (Constants as any).easConfig?.projectId;
-  const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+  const { data: token } = await getExpoPushTokenAsync({ projectId });
   await api.registerDevice({ token, platform: Platform.OS, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
   return token;
 }
@@ -193,7 +208,7 @@ export async function openDndSettings() {
 
 /** "Mark as seen" and opening a message both stop the repeats. Returns an unsubscribe function. */
 export function listenForResponses(h: { onSeen: (alertId: string) => void; onOpen: (messageId: string) => void }) {
-  const sub = Notifications.addNotificationResponseReceivedListener((r) => {
+  const sub = addNotificationResponseReceivedListener((r) => {
     const d: any = r.notification.request.content.data ?? {};
     if (d.alertId) h.onSeen(d.alertId);
     if (r.actionIdentifier !== "seen" && d.messageId) h.onOpen(d.messageId);

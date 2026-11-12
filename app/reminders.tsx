@@ -34,7 +34,7 @@ export default function Reminders() {
       </Card>
       <Card>
         <SectionLabel>Status</SectionLabel>
-        <Text style={styles.body}>Your choice is saved on this phone and sent to JIC. Reminder sending from the JIC server is not switched on yet, so you will not get repeat alerts until it is.</Text>
+        <Text style={styles.body}>Reminders are scheduled on this phone while you have unread messages, and they stop when you open them. They use your alert sound and ring on vibrate setting. The phone updates its list when you open the app or a message arrives while it is open, so a message that arrives while the app is closed starts reminding once you next open it.</Text>
       </Card>
     </Screen>
   );

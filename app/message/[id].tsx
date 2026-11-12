@@ -7,6 +7,8 @@ import { messageContent } from "../../lib/messageFields";
 import { Avatar, Card, ReadPill, ScreenHeader, SectionLabel, Toast } from "../../components/ui";
 import { BOTTOM_GAP, colors, radius, space, type } from "../../lib/theme";
 import { formatUsPhone } from "../../lib/phone";
+import { loadPrefs } from "../../lib/prefsStore";
+import { syncRemindersFromServer } from "../../lib/reminders";
 import {
   ALL_METHODS,
   firstName,
@@ -71,7 +73,6 @@ export default function MessageDetail() {
   const [justSaved, setJustSaved] = useState(false);
   const message = loaded?.id === messageId ? loaded.message : null;
   const activeId = useRef(messageId);
-  activeId.current = messageId;
   const markedRead = useRef<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedNoteRef = useRef("");
@@ -124,19 +125,35 @@ export default function MessageDetail() {
     }
   }, [loaded, messageId, say]);
 
+  const [noteScope, setNoteScope] = useState(messageId);
+  if (noteScope !== messageId) {
+    setNoteScope(messageId);
+    setNote("");
+    setSavedNote("");
+    setJustSaved(false);
+    setMoreOpen(false);
+  }
+
+  useEffect(() => {
+    activeId.current = messageId;
+  }, [messageId]);
+
   useEffect(() => {
     if (!messageId) return;
-    load();
+    // Nested so the request's state updates are not synchronous effect work.
+    void (async () => {
+      await load();
+    })();
   }, [messageId]);
 
   useEffect(() => {
     if (!messageId) return;
     let cancel = false;
-    setTeam([]);
-    setTeamHidden(false);
-    setToId(null);
-    setMethod(null);
-    (async () => {
+    void (async () => {
+      setTeam([]);
+      setTeamHidden(false);
+      setToId(null);
+      setMethod(null);
       try {
         const res = await authorizedFetch("https://jicagents.com/api/mobile/team");
         if (cancel) return;
@@ -163,11 +180,7 @@ export default function MessageDetail() {
   }, [messageId]);
 
   useEffect(() => {
-    setNote("");
-    setSavedNote("");
     savedNoteRef.current = "";
-    setJustSaved(false);
-    setMoreOpen(false);
   }, [messageId]);
 
   useEffect(() => {
@@ -560,6 +573,8 @@ async function postRead(id: string, next: boolean) {
   });
   if (res.status === 401) throw new SignedOutError();
   if (!res.ok) throw new Error("Could not update");
+  // Opening or un-reading a message changes the unread count, so refresh the phone's reminder.
+  loadPrefs().then((p) => syncRemindersFromServer(p.repeatMin)).catch(() => {});
 }
 
 function isKnownMethod(value: unknown): value is Method {

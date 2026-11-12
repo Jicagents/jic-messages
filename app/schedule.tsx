@@ -39,7 +39,10 @@ export default function MySchedule() {
   }, []);
 
   useEffect(() => {
-    load();
+    // The fetch lives in a nested function so its state updates are not synchronous effect work.
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   return (
