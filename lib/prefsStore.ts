@@ -3,6 +3,7 @@ import { DEFAULT_ALERT_PREFS, type AlertPrefs } from "../app/lib/alertChannel";
 import { ensureAlertChannel, loadAlertPrefs } from "../app/lib/notifications";
 import type { RepeatMin } from "../app/lib/prefs";
 import { authorizedFetch } from "./messageApi";
+import { syncRemindersFromServer } from "./reminders";
 
 export type AppPrefs = AlertPrefs & { repeatMin: RepeatMin };
 
@@ -31,4 +32,6 @@ export async function savePrefs(next: AppPrefs): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prefs: next }),
   }).catch(() => {});
+  // Reminders run on the phone: apply the new interval right away.
+  await syncRemindersFromServer(next.repeatMin).catch(() => {});
 }

@@ -7,6 +7,8 @@ import { messageContent } from "../../lib/messageFields";
 import { Avatar, Card, ReadPill, ScreenHeader, SectionLabel, Toast } from "../../components/ui";
 import { BOTTOM_GAP, colors, radius, space, type } from "../../lib/theme";
 import { formatUsPhone } from "../../lib/phone";
+import { loadPrefs } from "../../lib/prefsStore";
+import { syncRemindersFromServer } from "../../lib/reminders";
 import {
   ALL_METHODS,
   firstName,
@@ -560,6 +562,8 @@ async function postRead(id: string, next: boolean) {
   });
   if (res.status === 401) throw new SignedOutError();
   if (!res.ok) throw new Error("Could not update");
+  // Opening or un-reading a message changes the unread count, so refresh the phone's reminder.
+  loadPrefs().then((p) => syncRemindersFromServer(p.repeatMin)).catch(() => {});
 }
 
 function isKnownMethod(value: unknown): value is Method {
