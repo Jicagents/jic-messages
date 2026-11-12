@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState, Platform, StyleSheet, Text } from "react-native";
 import { SOUND_IDS, type SoundId, type VibratePattern } from "./lib/alertChannel";
 import { getPermissionStatus, openSystemSettings, requestPermissions, scheduleAlarmTest } from "./lib/notifications";
+import { previewSound } from "./lib/previewSound";
 import { loadPrefs, savePrefs, type AppPrefs } from "../lib/prefsStore";
 import { Screen } from "../components/Screen";
 import { Card, PrimaryButton, SectionLabel } from "../components/ui";
@@ -68,7 +69,7 @@ export default function NotificationsScreen() {
         <SectionLabel>New message alerts</SectionLabel>
         <SwitchRow first title="Sound" value={prefs.sound.enabled} onChange={(v) => update({ ...prefs, sound: { ...prefs.sound, enabled: v } })} />
         {prefs.sound.enabled ? (
-          <Choices<SoundId> options={SOUND_IDS.map((s) => ({ v: s, label: cap(s) }))} value={prefs.sound.id} onChange={(v) => update({ ...prefs, sound: { ...prefs.sound, id: v } })} />
+          <Choices<SoundId> options={SOUND_IDS.map((s) => ({ v: s, label: cap(s) }))} value={prefs.sound.id} onChange={(v) => { update({ ...prefs, sound: { ...prefs.sound, id: v } }); previewSound(v); }} />
         ) : null}
         {Platform.OS === "android" ? (
           <>
