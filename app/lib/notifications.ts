@@ -52,12 +52,12 @@ export async function loadAlertPrefs(): Promise<AlertPrefs> {
   }
 }
 
-type ChannelOpts = { soundFile: string | null; pattern: number[] | null; alarmStream: boolean };
+type ChannelOpts = { soundFile: string | null; pattern: number[] | null; alarmStream: boolean; name?: string; description?: string };
 
-function alarmChannelInput({ soundFile, pattern, alarmStream }: ChannelOpts) {
+function alarmChannelInput({ soundFile, pattern, alarmStream, name, description }: ChannelOpts) {
   return {
-    name: "Message alerts",
-    description: "New messages from callers",
+    name: name ?? "Message alerts",
+    description: description ?? "New messages from callers",
     importance: Notifications.AndroidImportance.MAX,
     sound: soundFile,
     enableVibrate: !!pattern,
@@ -85,13 +85,13 @@ async function recreateAlarmChannel(id: string, opts: ChannelOpts) {
   await Notifications.setNotificationChannelAsync(id, alarmChannelInput(opts));
 }
 
-async function ensureSideChannels() {
-  await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
+async function ensureSideChannels(opts: ChannelOpts) {
+  // Reminders use the same sound, vibration and alarm-volume setting as new message alerts, so they
+  // are heard on vibrate too. Channel audio is immutable after creation, so delete and recreate.
+  await recreateAlarmChannel(REMINDER_CHANNEL_ID, {
+    ...opts,
     name: "Unread reminders",
     description: "Reminders about messages nobody has opened yet",
-    importance: Notifications.AndroidImportance.HIGH,
-    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
-    enableVibrate: true,
   });
   await Notifications.setNotificationChannelAsync(GENERAL_CHANNEL_ID, {
     name: "General",
@@ -117,7 +117,7 @@ export async function ensureAlertChannel(p: AlertPrefs) {
   for (const id of legacyServerChannelIds()) {
     await recreateAlarmChannel(id, { ...media, alarmStream });
   }
-  await ensureSideChannels();
+  await ensureSideChannels({ ...media, alarmStream });
 }
 
 /** Local alert on jic-alerts-v3. The portal test push does not send channelId, so it cannot select this channel. */

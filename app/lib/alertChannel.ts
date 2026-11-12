@@ -2,7 +2,7 @@
 // channelId. Until it does, it still sends alert-...-v1 from jic-site/src/server/alertChannel.ts;
 // legacyServerChannelIds() is that full set, and the app creates each one.
 export const ALERT_CHANNEL_ID = "jic-alerts-v3";
-/** Unread reminders: high importance, follows the phone's ringer (never the alarm stream). */
+/** Unread reminders: high importance, uses the same sound, vibration and ring-on-vibrate setting as alerts. */
 export const REMINDER_CHANNEL_ID = "jic-reminders";
 /** Test and app info notifications: default importance. */
 export const GENERAL_CHANNEL_ID = "jic-general";
