@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { ScrollView, StyleSheet, View, type RefreshControlProps } from "react-native";
-import type { ReactElement } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenHeader } from "./ui";
 import { BOTTOM_GAP, colors, space } from "../lib/theme";

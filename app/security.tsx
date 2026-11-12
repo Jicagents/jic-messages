@@ -44,7 +44,7 @@ export default function AppSecurity() {
       </Card>
       <Card>
         <SectionLabel>Your sign-in</SectionLabel>
-        <Text style={styles.body}>You stay signed in on this phone. Your sign-in is kept in the phone's secure storage and renews itself. Sign out from Settings to remove it.</Text>
+        <Text style={styles.body}>{"You stay signed in on this phone. Your sign-in is kept in the phone's secure storage and renews itself. Sign out from Settings to remove it."}</Text>
       </Card>
     </Screen>
   );

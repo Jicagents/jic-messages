@@ -77,7 +77,7 @@ export default function NotificationsScreen() {
             {prefs.vibrate.enabled ? <Choices<VibratePattern> options={VIBES} value={prefs.vibrate.pattern} onChange={(v) => update({ ...prefs, vibrate: { ...prefs.vibrate, pattern: v } })} /> : null}
           </>
         ) : null}
-        <Text style={styles.note}>Android keeps separate channels for message alerts, unread reminders, and general notices. You can also fine-tune each one in your phone's notification settings.</Text>
+        <Text style={styles.note}>{"Android keeps separate channels for message alerts, unread reminders, and general notices. You can also fine-tune each one in your phone's notification settings."}</Text>
       </Card>
 
       <PrimaryButton label="Send test notification" onPress={test} />
