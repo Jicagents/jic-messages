@@ -1,6 +1,6 @@
 // The phone's alarm channel. Portal push in jic-site/src/server/push.ts should send this
-// channelId. Until it does, it still sends alert-...-v1 from jic-site/src/server/alertChannel.ts;
-// legacyServerChannelIds() is that full set, and the app creates each one.
+// channelId, and it now does. legacyServerChannelIds() lists the retired alert-...-v1 ids so the
+// app can delete them (they showed up as dozens of identical "Message alerts" channels).
 export const ALERT_CHANNEL_ID = "jic-alerts-v3";
 /** Unread reminders: high importance, uses the same sound, vibration and ring-on-vibrate setting as alerts. */
 export const REMINDER_CHANNEL_ID = "jic-reminders";
@@ -35,7 +35,7 @@ const LEGACY_SOUNDS = [...SOUND_IDS, "mute"] as const;
 const LEGACY_VIBES = ["short", "long", "pulse", "still"] as const;
 const LEGACY_MODES = ["ovr", "std"] as const;
 
-/** Every channelId jic-site/src/server/alertChannel.ts can emit while CH_VERSION is v1. */
+/** Every retired channelId the old portal could emit while CH_VERSION was v1. The app deletes these. */
 export function legacyServerChannelIds(): string[] {
   const ids: string[] = [];
   for (const sound of LEGACY_SOUNDS) {
