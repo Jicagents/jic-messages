@@ -3,9 +3,10 @@ import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Keyboa
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import Constants from "expo-constants";
-import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
 import { signIn, getValidAccess } from "../lib/auth";
+import { hasScreenLock, NO_SCREEN_LOCK_MESSAGE, unlockWithDevice } from "../lib/deviceAuth";
+import { fullSignOut } from "../lib/fullSignOut";
 import * as Notifications from "expo-notifications";
 import { authorizedFetch } from "../lib/messageApi";
 import { prepareNotifications } from "./lib/notifications";
@@ -81,13 +82,17 @@ export default function Login() {
         if (cancel) return;
         if (remembered.email) setEmail(remembered.email);
         if (!remembered.remember) setRemember(false);
-        const enabled = await SecureStore.getItemAsync("jic_biometric");
         // Access tokens expire in 15 minutes. Refresh before the inbox or a message fetch runs.
         const token = await getValidAccess();
         if (cancel || manualSignIn.current || !token) return;
-        if (enabled === "true") {
-          const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Unlock JIC Messages" });
-          if (!result.success || cancel || manualSignIn.current) return;
+        // The phone's unlock (fingerprint, face, or PIN) is always required to open messages.
+        if (!(await hasScreenLock())) {
+          if (!cancel) setError(NO_SCREEN_LOCK_MESSAGE);
+          return;
+        }
+        if (!(await unlockWithDevice()) || cancel || manualSignIn.current) {
+          if (!cancel && !manualSignIn.current) setError("The phone unlock didn't finish. Sign in to try again.");
+          return;
         }
         // Stay signed in. Refresh the push token without blocking the inbox on a slow Expo request.
         void registerDevice();
@@ -115,6 +120,12 @@ export default function Login() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
+      if (!(await hasScreenLock())) {
+        await fullSignOut();
+        manualSignIn.current = false;
+        setError(NO_SCREEN_LOCK_MESSAGE);
+        return;
+      }
       // Remember me keeps the email filled in next time. Staying signed in works either way.
       await storeRememberedEmail(remember, email.trim());
       await registerDevice();

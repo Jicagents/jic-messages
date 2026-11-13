@@ -102,21 +102,19 @@ async function ensureSideChannels(opts: ChannelOpts) {
 }
 
 /**
- * Android: delete immutable pre-alarm channels, then create jic-alerts-v3 and every
- * alert-...-v1 id the portal may still send. iPhone has no channels.
- * Sound and vibrate toggles apply to all of those alarm channels, not only v3.
+ * Android: delete the retired alert-...-v1 channels, then recreate jic-alerts-v3 (channel audio is
+ * immutable, so changes need delete and create). iPhone has no channels.
  */
 export async function ensureAlertChannel(p: AlertPrefs) {
   if (Platform.OS !== "android") return;
-  for (const id of retiredPrefixedChannelIds()) {
-    await Notifications.deleteNotificationChannelAsync(id);
+  // The portal now sends only jic-alerts-v3. Older builds created 48 look-alike "Message alerts"
+  // channels for the retired alert-...-v1 ids; delete them so Settings shows one.
+  for (const id of [...retiredPrefixedChannelIds(), ...legacyServerChannelIds()]) {
+    await Notifications.deleteNotificationChannelAsync(id).catch(() => {});
   }
   const alarmStream = p.ringOnVibrate !== false;
   const media = channelMedia(p);
   await recreateAlarmChannel(ALERT_CHANNEL_ID, { ...media, alarmStream });
-  for (const id of legacyServerChannelIds()) {
-    await recreateAlarmChannel(id, { ...media, alarmStream });
-  }
   await ensureSideChannels({ ...media, alarmStream });
 }
 

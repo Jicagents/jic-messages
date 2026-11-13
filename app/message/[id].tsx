@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Linking, ScrollView, TextInput, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, LayoutAnimation, UIManager } from "react-native";
+import { Alert, View, Text, StyleSheet, Pressable, Linking, ScrollView, TextInput, RefreshControl, ActivityIndicator, KeyboardAvoidingView, Platform, LayoutAnimation, UIManager } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { authorizedFetch, formatApiError, isMessageUuid, messageDetailUrl, routeParam, SignedOutError } from "../../lib/messageApi";
@@ -248,6 +248,24 @@ export default function MessageDetail() {
   function callCaller(raw: string) {
     if (!raw) return;
     Linking.openURL("tel:" + encodeURIComponent("*67") + encodeURIComponent(raw));
+  }
+
+  /** Texts and emails are not secure channels. Ask before sending message details through them. */
+  function confirmSend() {
+    if (!person || !effective || busy) return;
+    if (effective === "app") {
+      void send();
+      return;
+    }
+    const channel = effective === "call" ? "a phone call" : effective === "text" ? "a text message" : effective === "email" ? "an email" : "a text and an email";
+    Alert.alert(
+      "Send outside the app?",
+      `This sends the caller's details by ${channel}. Texts, emails and calls are not secure, so only send what you are allowed to share this way. App notifications keep the message inside JIC Messages.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Send anyway", style: "destructive", onPress: () => void send() },
+      ],
+    );
   }
 
   async function send() {
@@ -525,13 +543,14 @@ export default function MessageDetail() {
                       </View>
                     ) : null}
                     {effective ? <Text style={styles.hint}>{METHOD_HINT[effective]}</Text> : null}
+                    {effective && effective !== "app" ? <Text style={styles.hint}>⚠ Not secure: only the app notification keeps the message inside JIC Messages.</Text> : null}
                   </>
                 ) : null}
 
                 <Pressable
                   style={({ pressed }) => [styles.sendBtn, !person && styles.sendIdle, pressed && person && { opacity: 0.85 }]}
                   disabled={!person || busy}
-                  onPress={send}
+                  onPress={confirmSend}
                   accessibilityRole="button"
                 >
                   {busy ? <ActivityIndicator color={colors.tealInk} /> : <Text style={[styles.sendText, !person && styles.sendTextIdle]}>{sendLabel}</Text>}

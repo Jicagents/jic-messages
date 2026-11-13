@@ -56,10 +56,13 @@ export function ScreenHeader({ title, back, right }: { title?: string; back?: bo
           </Pressable>
         ) : null}
         <BrandLogo size={30} />
-        <View style={{ flex: 1 }} />
+        {title ? (
+          <Text style={[type.title, styles.headerTitle]} numberOfLines={1} accessibilityRole="header">{title}</Text>
+        ) : (
+          <View style={{ flex: 1 }} />
+        )}
         {right}
       </View>
-      {title ? <Text style={[type.title, styles.headerTitle]} accessibilityRole="header">{title}</Text> : null}
     </View>
   );
 }
@@ -113,7 +116,7 @@ const styles = StyleSheet.create({
   pillTextUnread: { color: colors.danger },
   header: { backgroundColor: colors.bgDeep, paddingHorizontal: space.lg, paddingBottom: space.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   headerRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
-  headerTitle: { marginTop: space.md },
+  headerTitle: { flex: 1, fontSize: 22, marginLeft: space.xs },
   backBtn: { width: 36, height: 40, alignItems: "flex-start", justifyContent: "center" },
   backText: { color: colors.text, fontSize: 34, lineHeight: 36, fontWeight: "300" },
   btn: { minHeight: 54, borderRadius: radius.md, alignItems: "center", justifyContent: "center", paddingHorizontal: space.lg },
