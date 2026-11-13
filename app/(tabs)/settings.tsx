@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { signOut } from "../../lib/auth";
+import { fullSignOut } from "../../lib/fullSignOut";
 import { authorizedFetch, SignedOutError } from "../../lib/messageApi";
 import { currentSession } from "../../lib/session";
 import { loadPrefs } from "../../lib/prefsStore";
@@ -55,7 +55,7 @@ export default function Settings() {
         text: "Sign out",
         style: "destructive",
         onPress: async () => {
-          await signOut();
+          await fullSignOut();
           router.replace("/");
         },
       },

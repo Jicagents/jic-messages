@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as Notifications from "expo-notifications";
+import { AppLock } from "../components/AppLock";
 import { prepareNotifications } from "./lib/notifications";
 import { messageIdFromData } from "../lib/messageApi";
 import { loadPrefs } from "../lib/prefsStore";
@@ -42,9 +43,9 @@ export default function Layout() {
   }, []);
 
   return (
-    <>
+    <AppLock>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }} />
-    </>
+    </AppLock>
   );
 }
