@@ -57,4 +57,5 @@ export async function getValidAccess(): Promise<string | null> {
 export async function signOut() {
   await SecureStore.deleteItemAsync("jic_access");
   await SecureStore.deleteItemAsync("jic_refresh");
+  await SecureStore.deleteItemAsync("jic_biometric").catch(() => {});
 }
